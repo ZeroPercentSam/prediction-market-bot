@@ -1,65 +1,187 @@
-import Image from "next/image";
+import { StatCard } from "@/components/dashboard/stat-card";
+import { PipelineStatus } from "@/components/dashboard/pipeline-status";
+import { Card } from "@/components/ui/card";
+import {
+  DollarSign,
+  TrendingUp,
+  Target,
+  BarChart3,
+  Activity,
+  AlertTriangle,
+  Brain,
+  Search,
+} from "lucide-react";
 
-export default function Home() {
+// Mock data — will be replaced with Supabase queries
+const mockStats = {
+  bankroll: 10000,
+  dailyPnl: 127.5,
+  dailyPnlPct: 1.28,
+  openPositions: 3,
+  activeMarkets: 47,
+  pendingSignals: 2,
+  winRate: 64.3,
+  sharpeRatio: 2.14,
+};
+
+const mockPipelineStatus = {
+  scan: "idle" as const,
+  research: "idle" as const,
+  predict: "idle" as const,
+  execute: "idle" as const,
+  compound: "idle" as const,
+};
+
+const mockRecentActivity = [
+  {
+    id: 1,
+    type: "trade",
+    message: 'Bought YES on "Will BTC exceed $100K by April?" at $0.42',
+    time: "2 min ago",
+  },
+  {
+    id: 2,
+    type: "signal",
+    message: 'New signal: 8.2% edge detected on "Fed rate cut in May"',
+    time: "5 min ago",
+  },
+  {
+    id: 3,
+    type: "scan",
+    message: "Scanned 312 markets across Polymarket and Kalshi",
+    time: "10 min ago",
+  },
+  {
+    id: 4,
+    type: "research",
+    message: 'Analyzed 23 news sources for "2026 Presidential Election"',
+    time: "15 min ago",
+  },
+  {
+    id: 5,
+    type: "prediction",
+    message:
+      "Ensemble model predicts 72% YES vs market price 63% (9% edge)",
+    time: "15 min ago",
+  },
+];
+
+export default function OverviewPage() {
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-2xl font-bold text-white">Dashboard Overview</h1>
+        <p className="text-sm text-zinc-400">
+          Real-time view of your prediction market trading bot
+        </p>
+      </div>
+
+      {/* KPI Cards */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <StatCard
+          title="Total Bankroll"
+          value={`$${mockStats.bankroll.toLocaleString()}`}
+          icon={DollarSign}
         />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
+        <StatCard
+          title="Daily P&L"
+          value={`+$${mockStats.dailyPnl}`}
+          change={`+${mockStats.dailyPnlPct}%`}
+          changeType="positive"
+          icon={TrendingUp}
+        />
+        <StatCard
+          title="Win Rate"
+          value={`${mockStats.winRate}%`}
+          change="Target: 60%+"
+          changeType="positive"
+          icon={Target}
+          description="Last 30 days"
+        />
+        <StatCard
+          title="Sharpe Ratio"
+          value={mockStats.sharpeRatio.toFixed(2)}
+          change="Target: >2.0"
+          changeType="positive"
+          icon={BarChart3}
+          description="Annualized"
+        />
+      </div>
+
+      {/* Secondary Stats */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <StatCard
+          title="Open Positions"
+          value={mockStats.openPositions.toString()}
+          description="Max 15 concurrent"
+          icon={Activity}
+        />
+        <StatCard
+          title="Active Markets"
+          value={mockStats.activeMarkets.toString()}
+          description="Passing filters"
+          icon={Search}
+        />
+        <StatCard
+          title="Pending Signals"
+          value={mockStats.pendingSignals.toString()}
+          description="Awaiting execution"
+          icon={Brain}
+        />
+      </div>
+
+      {/* Pipeline Status */}
+      <PipelineStatus statuses={mockPipelineStatus} />
+
+      {/* Recent Activity & Equity Curve */}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <Card className="border-zinc-800 bg-zinc-900/50 p-6">
+          <h3 className="mb-4 text-sm font-medium text-zinc-400">
+            Recent Activity
+          </h3>
+          <div className="space-y-3">
+            {mockRecentActivity.map((activity) => (
+              <div
+                key={activity.id}
+                className="flex items-start gap-3 rounded-lg border border-zinc-800 bg-zinc-900 p-3"
+              >
+                <div className="mt-0.5">
+                  {activity.type === "trade" && (
+                    <TrendingUp className="h-4 w-4 text-emerald-500" />
+                  )}
+                  {activity.type === "signal" && (
+                    <AlertTriangle className="h-4 w-4 text-amber-500" />
+                  )}
+                  {activity.type === "scan" && (
+                    <Search className="h-4 w-4 text-blue-500" />
+                  )}
+                  {activity.type === "research" && (
+                    <Brain className="h-4 w-4 text-purple-500" />
+                  )}
+                  {activity.type === "prediction" && (
+                    <Target className="h-4 w-4 text-cyan-500" />
+                  )}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm text-zinc-300">{activity.message}</p>
+                  <p className="text-xs text-zinc-500">{activity.time}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+
+        <Card className="border-zinc-800 bg-zinc-900/50 p-6">
+          <h3 className="mb-4 text-sm font-medium text-zinc-400">
+            Equity Curve
+          </h3>
+          <div className="flex h-64 items-center justify-center rounded-lg border border-dashed border-zinc-700">
+            <p className="text-sm text-zinc-500">
+              Chart will render with live data from Supabase
+            </p>
+          </div>
+        </Card>
+      </div>
     </div>
   );
 }

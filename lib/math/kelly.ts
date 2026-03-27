@@ -1,0 +1,47 @@
+/**
+ * Kelly Criterion Position Sizing
+ *
+ * f* = (p * b - q) / b
+ * where:
+ *   p = probability of winning
+ *   q = 1 - p (probability of losing)
+ *   b = net odds received on the wager (payout ratio)
+ */
+
+export interface KellyResult {
+  fullKelly: number;
+  fractionalKelly: number;
+  positionSize: number;
+  positionSizePct: number;
+}
+
+export function calculateKelly(
+  probability: number,
+  marketPrice: number,
+  bankroll: number,
+  kellyFraction: number = 0.25,
+  maxPositionPct: number = 0.05
+): KellyResult {
+  // b = decimal odds - 1 = (1/marketPrice) - 1
+  const b = (1 / marketPrice) - 1;
+  const p = probability;
+  const q = 1 - p;
+
+  // Full Kelly fraction
+  const fullKelly = Math.max(0, (p * b - q) / b);
+
+  // Apply fractional Kelly for safety
+  const fractionalKelly = fullKelly * kellyFraction;
+
+  // Apply position size cap
+  const cappedFraction = Math.min(fractionalKelly, maxPositionPct);
+
+  const positionSize = cappedFraction * bankroll;
+
+  return {
+    fullKelly,
+    fractionalKelly,
+    positionSize,
+    positionSizePct: cappedFraction,
+  };
+}
