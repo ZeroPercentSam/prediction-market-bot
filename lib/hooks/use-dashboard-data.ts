@@ -271,28 +271,24 @@ export function useModelAccuracy() {
     queryKey: ["model-accuracy"],
     refetchInterval: 60_000,
     queryFn: async () => {
-      const { data: estimates } = await supabase
-        .from("model_estimates")
-        .select("model_id, probability, prediction_id, predictions(resolved_outcome)")
-        .not("predictions.resolved_outcome", "is", null);
+      // model_estimates has 'model' column (not model_id)
+      // predictions table has no resolved_outcome column, so we use
+      // calibration_data which tracks actual outcomes per model
+      const { data: calibrationData } = await supabase
+        .from("calibration_data")
+        .select("model_id, predicted_probability, actual_outcome");
 
-      if (!estimates || estimates.length === 0) return [];
+      if (!calibrationData || calibrationData.length === 0) return [];
 
       const byModel: Record<string, { correct: number; total: number }> = {};
 
-      for (const est of estimates) {
-        const outcome = (est as Record<string, unknown>).predictions as {
-          resolved_outcome: boolean | null;
-        } | null;
-        if (!outcome || outcome.resolved_outcome === null || outcome.resolved_outcome === undefined)
-          continue;
-
-        const modelId = est.model_id;
+      for (const row of calibrationData) {
+        const modelId = row.model_id;
         if (!byModel[modelId]) byModel[modelId] = { correct: 0, total: 0 };
         byModel[modelId].total++;
 
-        const predictedYes = est.probability >= 0.5;
-        const actualYes = outcome.resolved_outcome === true;
+        const predictedYes = row.predicted_probability >= 0.5;
+        const actualYes = row.actual_outcome === 1;
         if (predictedYes === actualYes) byModel[modelId].correct++;
       }
 
@@ -311,21 +307,22 @@ export function usePnlHistory() {
     queryKey: ["pnl-history"],
     refetchInterval: 60_000,
     queryFn: async () => {
+      // trades table uses settled_at and pnl (not exited_at / realized_pnl)
       const { data } = await supabase
         .from("trades")
-        .select("exited_at, realized_pnl")
+        .select("settled_at, pnl")
         .eq("status", "settled")
-        .not("exited_at", "is", null)
-        .not("realized_pnl", "is", null)
-        .order("exited_at", { ascending: true });
+        .not("settled_at", "is", null)
+        .not("pnl", "is", null)
+        .order("settled_at", { ascending: true });
 
       if (!data || data.length === 0) return [];
 
       let cumulative = 0;
       return data.map((trade) => {
-        cumulative += trade.realized_pnl ?? 0;
+        cumulative += trade.pnl ?? 0;
         return {
-          date: trade.exited_at,
+          date: trade.settled_at,
           pnl: Math.round(cumulative * 100) / 100,
         };
       });
@@ -395,6 +392,9 @@ export function useRiskData() {
         { data: activeTrades },
         { data: settledToday },
         { data: killSwitchConfig },
+        { data: maxPosSizeConfig },
+        { data: dailyLossConfig },
+        { data: maxConcurrentConfig },
       ] = await Promise.all([
         supabase
           .from("risk_snapshots")
@@ -413,7 +413,22 @@ export function useRiskData() {
         supabase
           .from("system_config")
           .select("value")
-          .eq("key", "kill_switch")
+          .eq("key", "kill_switch_active")
+          .single(),
+        supabase
+          .from("system_config")
+          .select("value")
+          .eq("key", "max_position_size_pct")
+          .single(),
+        supabase
+          .from("system_config")
+          .select("value")
+          .eq("key", "daily_loss_limit_pct")
+          .single(),
+        supabase
+          .from("system_config")
+          .select("value")
+          .eq("key", "max_concurrent_positions")
           .single(),
       ]);
 
@@ -433,18 +448,25 @@ export function useRiskData() {
         settledToday?.reduce((sum, t) => sum + (t.pnl ?? 0), 0) ?? 0;
 
       // Determine kill switch state from system_config or risk snapshot
+      // system_config stores kill_switch_active as JSONB (e.g. 'true' or 'false')
       let killSwitchActive = risk?.kill_switch_active ?? false;
-      if (killSwitchConfig?.value) {
-        try {
-          const parsed =
-            typeof killSwitchConfig.value === "string"
-              ? JSON.parse(killSwitchConfig.value)
-              : killSwitchConfig.value;
-          killSwitchActive = parsed.active ?? killSwitchActive;
-        } catch {
-          // ignore parse errors
+      if (killSwitchConfig?.value !== undefined && killSwitchConfig?.value !== null) {
+        const raw = killSwitchConfig.value;
+        if (typeof raw === "boolean") {
+          killSwitchActive = raw;
+        } else if (typeof raw === "string") {
+          killSwitchActive = raw === "true";
+        } else if (typeof raw === "object" && raw !== null && "active" in (raw as Record<string, unknown>)) {
+          killSwitchActive = Boolean((raw as Record<string, unknown>).active);
         }
       }
+
+      // Parse config values from system_config (stored as JSONB)
+      const parseConfigNum = (config: { value: unknown } | null, fallback: number): number => {
+        if (!config?.value) return fallback;
+        const val = typeof config.value === "string" ? parseFloat(config.value) : Number(config.value);
+        return isNaN(val) ? fallback : val;
+      };
 
       return {
         bankroll: risk?.bankroll ?? 0,
@@ -459,15 +481,39 @@ export function useRiskData() {
           number
         >,
         killSwitchActive,
-        maxConcurrentPositions: 15,
-        maxPositionSizePct: risk?.max_position_size_pct ?? 0.05,
-        dailyLossLimitPct: risk?.daily_loss_limit_pct ?? 0.15,
+        maxConcurrentPositions: parseConfigNum(maxConcurrentConfig, 15),
+        maxPositionSizePct: parseConfigNum(maxPosSizeConfig, 0.05),
+        dailyLossLimitPct: parseConfigNum(dailyLossConfig, 0.15),
       };
     },
   });
 }
 
 // --- System Config ---
+
+// Maps DB snake_case keys to camelCase keys used by the frontend
+const DB_KEY_TO_CAMEL: Record<string, string> = {
+  scan_interval_min: "scanIntervalMin",
+  min_market_volume: "minMarketVolume",
+  max_expiry_days: "maxExpiryDays",
+  edge_threshold: "edgeThreshold",
+  kelly_fraction: "kellyFraction",
+  max_position_size_pct: "maxPositionSizePct",
+  max_concurrent_positions: "maxConcurrentPositions",
+  daily_loss_limit_pct: "dailyLossLimitPct",
+  slippage_abort_pct: "slippageAbortPct",
+  ai_daily_budget_usd: "aiDailyBudgetUsd",
+  paper_trading_mode: "paperTradingMode",
+  model_weights: "modelWeights",
+  kill_switch_active: "killSwitchActive",
+  bankroll: "bankroll",
+  worker_heartbeat: "workerHeartbeat",
+};
+
+const CAMEL_TO_DB_KEY: Record<string, string> = Object.fromEntries(
+  Object.entries(DB_KEY_TO_CAMEL).map(([db, camel]) => [camel, db])
+);
+
 export function useSystemConfig() {
   return useQuery({
     queryKey: ["system-config"],
@@ -476,7 +522,9 @@ export function useSystemConfig() {
       const configMap: Record<string, unknown> = {};
       if (data) {
         for (const row of data) {
-          configMap[row.key] = row.value;
+          // Map snake_case DB key to camelCase for frontend consumption
+          const camelKey = DB_KEY_TO_CAMEL[row.key] ?? row.key;
+          configMap[camelKey] = row.value;
         }
       }
       return configMap;
@@ -490,10 +538,12 @@ export function useSaveConfig() {
   return useMutation({
     mutationFn: async (entries: { key: string; value: unknown }[]) => {
       for (const entry of entries) {
+        // Convert camelCase key to snake_case DB key
+        const dbKey = CAMEL_TO_DB_KEY[entry.key] ?? entry.key;
         const { error } = await supabase
           .from("system_config")
           .upsert(
-            { key: entry.key, value: entry.value },
+            { key: dbKey, value: entry.value },
             { onConflict: "key" }
           );
         if (error) throw error;
