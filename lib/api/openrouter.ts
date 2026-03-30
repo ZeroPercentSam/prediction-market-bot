@@ -18,7 +18,7 @@ export const MODEL_IDS: Record<AIModel, string> = {
   claude: "anthropic/claude-sonnet-4",
   gpt4o: "openai/gpt-4o",
   grok: "x-ai/grok-3",
-  gemini: "google/gemini-2.5-flash-preview",
+  gemini: "google/gemini-3-flash-preview",
   deepseek: "deepseek/deepseek-r1",
 };
 
