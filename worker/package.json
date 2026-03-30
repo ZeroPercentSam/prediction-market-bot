@@ -9,10 +9,8 @@
     "dev": "tsx watch index.ts"
   },
   "dependencies": {
-    "@openrouter/sdk": "^0.1.0",
     "@supabase/supabase-js": "^2.100.1",
-    "node-cron": "^3.0.3",
-    "zod": "^3.24.0"
+    "node-cron": "^3.0.3"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
