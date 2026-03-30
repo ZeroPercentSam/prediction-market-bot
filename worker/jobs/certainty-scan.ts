@@ -81,24 +81,39 @@ export async function runCertaintyScanJob(): Promise<void> {
       return;
     }
 
-    // 2. Check how many certainty positions we already have
-    const { count: existingCertaintyCount, error: countErr } = await supabase
-      .from("trades")
-      .select("*", { count: "exact", head: true })
-      .eq("notes", "certainty_trade")
-      .in("status", ["pending", "filled", "partial"]);
+    // 2. Check how many certainty positions AND total positions we have
+    const [
+      { count: existingCertaintyCount, error: countErr },
+      { count: totalOpenCount, error: totalCountErr },
+    ] = await Promise.all([
+      supabase
+        .from("trades")
+        .select("*", { count: "exact", head: true })
+        .eq("notes", "certainty_trade")
+        .in("status", ["pending", "filled", "partial"]),
+      supabase
+        .from("trades")
+        .select("*", { count: "exact", head: true })
+        .in("status", ["pending", "filled", "partial"]),
+    ]);
 
     if (countErr) {
       console.error("[certainty-scan] Failed to count existing positions:", countErr.message);
     }
+    if (totalCountErr) {
+      console.error("[certainty-scan] Failed to count total positions:", totalCountErr.message);
+    }
 
+    const maxConcurrent = Number(await getConfig("max_concurrent_positions").catch(() => 15));
     let openPositions = existingCertaintyCount || 0;
+    let totalPositions = totalOpenCount || 0;
 
-    // 3. Build set of markets where we already have ANY active position
+    // 3. Build set of markets where we already have ANY position (active or recently settled)
+    const recentCutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
     const { data: existingTrades } = await supabase
       .from("trades")
-      .select("market_id")
-      .in("status", ["pending", "filled", "partial"]);
+      .select("market_id, status")
+      .or(`status.in.(pending,filled,partial),and(status.eq.settled,settled_at.gte.${recentCutoff})`);
 
     const activeMarketIds = new Set<string>(
       (existingTrades || []).map((t) => t.market_id)
@@ -111,9 +126,13 @@ export async function runCertaintyScanJob(): Promise<void> {
     for (const candidate of candidates) {
       scanned++;
 
-      // Max positions check
+      // Max positions check (both per-strategy and global)
       if (openPositions >= MAX_CERTAINTY_POSITIONS) {
         console.log("[certainty-scan] Max certainty positions reached, stopping");
+        break;
+      }
+      if (totalPositions >= maxConcurrent) {
+        console.log("[certainty-scan] Global position limit reached, stopping");
         break;
       }
 
@@ -255,6 +274,7 @@ REASON: one sentence`;
 
       placed++;
       openPositions++;
+      totalPositions++;
       activeMarketIds.add(candidate.id);
 
       console.log(

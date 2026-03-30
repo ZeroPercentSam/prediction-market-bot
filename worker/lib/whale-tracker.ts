@@ -77,8 +77,11 @@ export async function getWhaleSignal(
 
     // Count unique whale wallets
     const uniqueWallets = new Set(whaleTrades.map((t) => t.wallet));
-    const convictionScore =
-      uniqueWallets.size * ((totalBuy + totalSell) / Math.max(1, whaleTrades.length));
+    // Conviction = total whale volume weighted by wallet diversity
+    // More wallets agreeing = higher conviction (consensus), regardless of trade count
+    const totalVolume = totalBuy + totalSell;
+    const walletDiversityBonus = Math.sqrt(uniqueWallets.size); // sqrt rewards diversity without exploding
+    const convictionScore = totalVolume * walletDiversityBonus;
 
     const signal: WhaleSignal = {
       marketId,
@@ -175,7 +178,9 @@ export function applyWhaleAdjustment(
   const whalesBullish = signal.netDirection === "bullish";
 
   // Scale adjustment by conviction (capped at 8%)
-  const baseAdjustment = Math.min(0.08, signal.convictionScore / 500_000);
+  // convictionScore = totalVolume * sqrt(uniqueWallets)
+  // $50K volume with 4 wallets = $100K conviction → 100K/1M = 10% → capped at 8%
+  const baseAdjustment = Math.min(0.08, signal.convictionScore / 1_000_000);
 
   let adjustment: number;
   if (modelBullish === whalesBullish) {
