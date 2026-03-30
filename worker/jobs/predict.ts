@@ -174,10 +174,17 @@ What is the probability this resolves YES?`;
       validProbs.reduce((s, p) => s + (p - mean) ** 2, 0) / Math.max(1, validProbs.length)
     );
 
+    // Compute actual evidence quality from research data
+    const sourceCount = research ? Number((research as { source_count?: number }).source_count ?? 0) : 0;
+    // Scale: 0 sources = 0.2, 5+ sources = 0.8, with intermediate values
+    const evidenceQuality = research
+      ? Math.min(0.8, 0.2 + (sourceCount / 5) * 0.6)
+      : 0.2;
+
     // Apply evidence penalties
     ensembleProb = applyEvidencePenalties(ensembleProb, {
       ensembleSpread: spread,
-      evidenceQuality: research ? 0.7 : 0.3,
+      evidenceQuality,
     });
 
     // --- SUPERVISOR RECONCILIATION ---
@@ -267,10 +274,10 @@ What is the probability this resolves YES?`;
       }
     }
 
-    // Calculate edge and EV
-    const edge = ensembleProb - marketPrice;
-    const b = (1 / marketPrice) - 1;
-    const ev = ensembleProb * b - (1 - ensembleProb);
+    // Calculate edge for both sides
+    const yesEdge = ensembleProb - marketPrice;
+    const noPrice = 1 - marketPrice;
+    const noEdge = (1 - ensembleProb) - noPrice; // noEdge = -(yesEdge)... but explicit is clearer
 
     // Confidence interval
     const margin = 1.96 * spread;
@@ -289,15 +296,26 @@ What is the probability this resolves YES?`;
 
     let signalGenerated = false;
     let signalDirection: "buy_yes" | "buy_no" | null = null;
+    let edge: number;
+    let ev: number;
 
-    if (Math.abs(edge) > edgeThreshold) {
-      if (edge > 0 && modelsAbove >= 3) {
-        signalGenerated = true;
-        signalDirection = "buy_yes";
-      } else if (edge < 0 && modelsBelow >= 3) {
-        signalGenerated = true;
-        signalDirection = "buy_no";
-      }
+    if (yesEdge > edgeThreshold && modelsAbove >= 3) {
+      signalGenerated = true;
+      signalDirection = "buy_yes";
+      edge = yesEdge;
+      const b = (1 / marketPrice) - 1;
+      ev = ensembleProb * b - (1 - ensembleProb);
+    } else if (noEdge > edgeThreshold && modelsBelow >= 3) {
+      signalGenerated = true;
+      signalDirection = "buy_no";
+      edge = noEdge;
+      const b = (1 / noPrice) - 1;
+      ev = (1 - ensembleProb) * b - ensembleProb;
+    } else {
+      // Store the larger absolute edge for the prediction record
+      edge = yesEdge;
+      const b = (1 / marketPrice) - 1;
+      ev = ensembleProb * b - (1 - ensembleProb);
     }
 
     // Store prediction

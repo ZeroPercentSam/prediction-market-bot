@@ -292,6 +292,17 @@ export async function runPnlUpdateJob(): Promise<void> {
       console.error(`[pnl-update] Failed to insert risk snapshot:`, snapshotError.message);
     }
 
+    // Update bankroll in system_config so Kelly sizing uses current equity
+    const { error: bankrollUpdateError } = await supabase
+      .from("system_config")
+      .upsert(
+        { key: "bankroll", value: Math.round(currentBankroll * 100) / 100 },
+        { onConflict: "key" }
+      );
+    if (bankrollUpdateError) {
+      console.error(`[pnl-update] Failed to update bankroll:`, bankrollUpdateError.message);
+    }
+
     const duration = Date.now() - start;
     await completePipelineRun(runId, {
       status: "success",

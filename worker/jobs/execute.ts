@@ -100,19 +100,18 @@ export async function runExecuteJob(): Promise<void> {
       return;
     }
 
-    // Check daily loss limit
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const { data: todayTrades, error: pnlError } = await supabase
-      .from("trades")
-      .select("pnl")
-      .gte("created_at", today.toISOString())
-      .not("pnl", "is", null);
+    // Check daily loss limit using latest risk snapshot (computed by pnl-update)
+    // This includes both realized + unrealized P&L, which is the true daily exposure
+    const { data: latestRiskSnapshot, error: pnlError } = await supabase
+      .from("risk_snapshots")
+      .select("daily_pnl, bankroll")
+      .order("timestamp", { ascending: false })
+      .limit(1);
     if (pnlError) {
       console.error(`[execute] Failed to fetch daily PnL:`, pnlError.message);
     }
 
-    const dailyPnl = (todayTrades || []).reduce((s, t) => s + (Number(t.pnl) || 0), 0);
+    const dailyPnl = Number(latestRiskSnapshot?.[0]?.daily_pnl ?? 0);
     if (dailyPnl / cfg.bankroll < -cfg.dailyLossLimitPct) {
       console.log("[execute] Daily loss limit hit, cancelling all signals");
       const { error: cancelError } = await supabase

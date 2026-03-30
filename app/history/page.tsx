@@ -1,9 +1,13 @@
 "use client";
 
+import { useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Clock, Inbox, Loader2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Clock, Inbox, Layers } from "lucide-react";
 import { useTrades } from "@/lib/hooks/use-dashboard-data";
+
+type StatusFilter = "all" | "filled" | "settled";
 
 function formatRelativeTime(dateStr: string): string {
   const now = Date.now();
@@ -18,6 +22,19 @@ function formatRelativeTime(dateStr: string): string {
   return `${diffDays} day${diffDays === 1 ? "" : "s"} ago`;
 }
 
+function classifyStrategy(notes: string | null | undefined): string {
+  if (!notes) return "prediction";
+  if (notes.includes("arb_pair")) return "arbitrage";
+  if (notes === "certainty_trade") return "certainty";
+  return "prediction";
+}
+
+const STRATEGY_COLORS: Record<string, string> = {
+  prediction: "bg-blue-500/10 text-blue-400 border-blue-500/20",
+  arbitrage: "bg-purple-500/10 text-purple-400 border-purple-500/20",
+  certainty: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
+};
+
 const classificationConfig: Record<
   string,
   { label: string; className: string }
@@ -31,12 +48,8 @@ const classificationConfig: Record<
     className: "bg-amber-500/10 text-amber-500 border-amber-500/20",
   },
   incorrect_prediction: {
-    label: "Incorrect Prediction",
+    label: "Incorrect",
     className: "bg-red-500/10 text-red-500 border-red-500/20",
-  },
-  edge_disappeared: {
-    label: "Edge Disappeared",
-    className: "bg-amber-500/10 text-amber-500 border-amber-500/20",
   },
 };
 
@@ -48,7 +61,6 @@ function LoadingSkeleton() {
           <div className="h-7 w-48 rounded bg-zinc-800 animate-pulse" />
           <div className="h-4 w-80 rounded bg-zinc-800/60 animate-pulse" />
         </div>
-        <div className="h-6 w-24 rounded bg-zinc-800 animate-pulse" />
       </div>
       <Card className="border-zinc-800 bg-zinc-900/50 overflow-hidden">
         <div className="p-4 space-y-4">
@@ -68,7 +80,11 @@ function LoadingSkeleton() {
 }
 
 export default function HistoryPage() {
-  const { data: trades, isLoading, error } = useTrades("settled", 50);
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const { data: trades, isLoading, error } = useTrades(
+    statusFilter === "all" ? undefined : statusFilter,
+    100
+  );
 
   if (isLoading) return <LoadingSkeleton />;
 
@@ -83,10 +99,17 @@ export default function HistoryPage() {
     );
   }
 
-  const settledTrades = trades ?? [];
+  const allTrades = trades ?? [];
+  const settledTrades = allTrades.filter((t) => t.status === "settled");
   const totalPnl = settledTrades.reduce((sum, t) => sum + (t.pnl ?? 0), 0);
   const wins = settledTrades.filter((t) => (t.pnl ?? 0) > 0).length;
   const winRate = settledTrades.length > 0 ? (wins / settledTrades.length) * 100 : 0;
+
+  const statusFilters: { key: StatusFilter; label: string }[] = [
+    { key: "all", label: `All (${allTrades.length})` },
+    { key: "filled", label: "Open" },
+    { key: "settled", label: "Settled" },
+  ];
 
   return (
     <div className="space-y-6">
@@ -94,8 +117,8 @@ export default function HistoryPage() {
         <div>
           <h1 className="text-2xl font-bold text-white">Trade History</h1>
           <p className="text-sm text-zinc-400">
-            {settledTrades.length} closed trade{settledTrades.length !== 1 ? "s" : ""} | Win rate:{" "}
-            {winRate.toFixed(0)}% | Total P&L:{" "}
+            {allTrades.length} total trade{allTrades.length !== 1 ? "s" : ""} |{" "}
+            {settledTrades.length} settled | Win rate: {winRate.toFixed(0)}% | Realized P&L:{" "}
             <span
               className={totalPnl >= 0 ? "text-emerald-500" : "text-red-500"}
             >
@@ -109,13 +132,32 @@ export default function HistoryPage() {
         </Badge>
       </div>
 
-      {settledTrades.length === 0 ? (
+      {/* Status Filter */}
+      <div className="flex items-center gap-2">
+        <Layers className="h-4 w-4 text-zinc-500" />
+        <span className="text-xs text-zinc-500 mr-1">Status:</span>
+        {statusFilters.map((f) => (
+          <Button
+            key={f.key}
+            variant={statusFilter === f.key ? "default" : "secondary"}
+            size="sm"
+            className={`text-xs h-7 ${
+              statusFilter === f.key ? "" : "bg-zinc-800 text-zinc-400 hover:text-white"
+            }`}
+            onClick={() => setStatusFilter(f.key)}
+          >
+            {f.label}
+          </Button>
+        ))}
+      </div>
+
+      {allTrades.length === 0 ? (
         <Card className="border-zinc-800 bg-zinc-900/50 p-12">
           <div className="flex flex-col items-center justify-center text-center">
             <Inbox className="h-10 w-10 text-zinc-600 mb-3" />
-            <p className="text-sm font-medium text-zinc-400">No settled trades yet</p>
+            <p className="text-sm font-medium text-zinc-400">No trades yet</p>
             <p className="text-xs text-zinc-500 mt-1">
-              Settled trades will appear here once positions are closed.
+              Trades will appear here once the pipeline generates and fills signals.
             </p>
           </div>
         </Card>
@@ -126,29 +168,23 @@ export default function HistoryPage() {
               <thead>
                 <tr className="border-b border-zinc-800 text-left">
                   <th className="px-4 py-3 font-medium text-zinc-400">Market</th>
+                  <th className="px-4 py-3 font-medium text-zinc-400">Strategy</th>
                   <th className="px-4 py-3 font-medium text-zinc-400">Direction</th>
-                  <th className="px-4 py-3 font-medium text-zinc-400 text-right">
-                    Entry
-                  </th>
-                  <th className="px-4 py-3 font-medium text-zinc-400 text-right">
-                    Exit
-                  </th>
-                  <th className="px-4 py-3 font-medium text-zinc-400 text-right">
-                    P&L
-                  </th>
-                  <th className="px-4 py-3 font-medium text-zinc-400">
-                    Classification
-                  </th>
-                  <th className="px-4 py-3 font-medium text-zinc-400">Settled</th>
+                  <th className="px-4 py-3 font-medium text-zinc-400 text-right">Entry</th>
+                  <th className="px-4 py-3 font-medium text-zinc-400 text-right">Exit</th>
+                  <th className="px-4 py-3 font-medium text-zinc-400 text-right">Size</th>
+                  <th className="px-4 py-3 font-medium text-zinc-400 text-right">P&L</th>
+                  <th className="px-4 py-3 font-medium text-zinc-400">Status</th>
+                  <th className="px-4 py-3 font-medium text-zinc-400">Date</th>
                 </tr>
               </thead>
               <tbody>
-                {settledTrades.map((trade) => {
-                  const config =
-                    classificationConfig[trade.classification ?? ""] ?? {
-                      label: trade.classification ?? "Unknown",
-                      className: "bg-zinc-500/10 text-zinc-400 border-zinc-500/20",
-                    };
+                {allTrades.map((trade) => {
+                  const strategy = classifyStrategy(trade.notes);
+                  const isSettled = trade.status === "settled";
+                  const classification = classificationConfig[trade.classification ?? ""];
+                  const pnl = trade.pnl ?? 0;
+
                   return (
                     <tr
                       key={trade.id}
@@ -158,6 +194,11 @@ export default function HistoryPage() {
                         {trade.markets?.question ?? "Unknown market"}
                       </td>
                       <td className="px-4 py-3">
+                        <Badge className={`text-xs capitalize ${STRATEGY_COLORS[strategy]}`}>
+                          {strategy}
+                        </Badge>
+                      </td>
+                      <td className="px-4 py-3">
                         <Badge
                           className={`text-xs ${
                             trade.direction === "buy_yes"
@@ -165,38 +206,51 @@ export default function HistoryPage() {
                               : "bg-red-500/10 text-red-500 border-red-500/20"
                           }`}
                         >
-                          {trade.direction === "buy_yes" ? "BUY YES" : "BUY NO"}
+                          {trade.direction === "buy_yes" ? "YES" : "NO"}
                         </Badge>
                       </td>
                       <td className="px-4 py-3 text-right font-mono text-zinc-300">
-                        ${(trade.entry_price ?? 0).toFixed(2)}
+                        ${(trade.entry_price ?? 0).toFixed(4)}
                       </td>
                       <td className="px-4 py-3 text-right font-mono text-zinc-300">
-                        ${(trade.fill_price ?? 0).toFixed(2)}
+                        {isSettled && trade.exit_price != null
+                          ? `$${Number(trade.exit_price).toFixed(2)}`
+                          : <span className="text-zinc-500">--</span>}
+                      </td>
+                      <td className="px-4 py-3 text-right font-mono text-zinc-300">
+                        ${(trade.position_size ?? 0).toFixed(0)}
                       </td>
                       <td
                         className={`px-4 py-3 text-right font-mono font-semibold ${
-                          (trade.pnl ?? 0) >= 0 ? "text-emerald-500" : "text-red-500"
+                          pnl >= 0 ? "text-emerald-500" : "text-red-500"
                         }`}
                       >
                         <div>
-                          {(trade.pnl ?? 0) >= 0 ? "+" : ""}${(trade.pnl ?? 0).toFixed(2)}
+                          {pnl >= 0 ? "+" : ""}${pnl.toFixed(2)}
                         </div>
                         {trade.pnl_pct != null && (
                           <div className="text-xs font-normal">
-                            {trade.pnl_pct >= 0 ? "+" : ""}
-                            {trade.pnl_pct.toFixed(1)}%
+                            {Number(trade.pnl_pct) >= 0 ? "+" : ""}
+                            {Number(trade.pnl_pct).toFixed(1)}%
                           </div>
                         )}
                       </td>
                       <td className="px-4 py-3">
-                        <Badge className={`text-xs ${config.className}`}>
-                          {config.label}
-                        </Badge>
+                        {isSettled && classification ? (
+                          <Badge className={`text-xs ${classification.className}`}>
+                            {classification.label}
+                          </Badge>
+                        ) : (
+                          <Badge variant="secondary" className="text-xs capitalize">
+                            {trade.status}
+                          </Badge>
+                        )}
                       </td>
                       <td className="px-4 py-3 text-xs text-zinc-500">
                         {trade.settled_at
                           ? new Date(trade.settled_at).toLocaleDateString()
+                          : trade.created_at
+                          ? formatRelativeTime(trade.created_at)
                           : "--"}
                       </td>
                     </tr>

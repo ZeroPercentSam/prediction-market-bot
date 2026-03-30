@@ -125,11 +125,21 @@ export async function runCertaintyScanJob(): Promise<void> {
       const yesPrice = Number(candidate.current_yes_price);
       const noPrice = Number(candidate.current_no_price);
 
-      // Calculate expected profit
+      // Calculate expected profit with Kelly-informed sizing
       const direction = candidate.side === "yes" ? "buy_yes" : "buy_no";
       const entryPrice = candidate.side === "yes" ? yesPrice : noPrice;
       const profitPerShare = 1 - entryPrice;
-      const rawSize = Math.min(CERTAINTY_POSITION_SIZE_PCT * bankroll, MAX_TRADE_SIZE);
+
+      // Kelly sizing: p=0.95 (AI confirmed), b=(1/entryPrice)-1
+      // Use fractional Kelly (25%) capped at CERTAINTY_POSITION_SIZE_PCT
+      const kellyP = 0.95; // AI-confirmed probability
+      const kellyB = (1 / entryPrice) - 1;
+      const kellyQ = 1 - kellyP;
+      const fullKelly = Math.max(0, (kellyP * kellyB - kellyQ) / kellyB);
+      const fracKelly = fullKelly * 0.25;
+      const sizePct = Math.min(fracKelly, CERTAINTY_POSITION_SIZE_PCT);
+      const rawSize = Math.min(sizePct * bankroll, MAX_TRADE_SIZE);
+
       const shares = rawSize / entryPrice;
       const expectedProfit = shares * profitPerShare;
 
