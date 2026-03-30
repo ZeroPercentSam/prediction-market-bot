@@ -16,6 +16,8 @@ import {
 } from "../lib/config.js";
 import { queryAllModels, type AIModel, type ModelPrediction } from "../lib/openrouter.js";
 import { calibrate, applyEvidencePenalties, loadCalibrationParams } from "../lib/calibration.js";
+import { runSupervisor, runResolutionSearch } from "../lib/supervisor.js";
+import { getWhaleSignal, applyWhaleAdjustment } from "../lib/whale-tracker.js";
 
 const PREDICTION_SYSTEM_PROMPT = `You are a prediction market analyst. Estimate the probability of an event occurring based on available evidence.
 
@@ -162,6 +164,62 @@ What is the probability this resolves YES?`;
       ensembleSpread: spread,
       evidenceQuality: research ? 0.7 : 0.3,
     });
+
+    // --- SUPERVISOR RECONCILIATION ---
+    // Only activates when model spread > 8% (significant disagreement)
+    const supervisorResult = await runSupervisor(
+      market.question,
+      marketPrice,
+      calibratedEstimates,
+      researchContext
+    );
+
+    if (supervisorResult) {
+      // If supervisor identified resolution searches, run them
+      if (supervisorResult.resolutionSearches.length > 0) {
+        const additionalResearch = await runResolutionSearch(
+          supervisorResult.resolutionSearches,
+          market.question
+        );
+        // Log the additional research for debugging
+        if (additionalResearch) {
+          console.log(
+            `[predict] Supervisor ran ${supervisorResult.resolutionSearches.length} resolution searches for "${market.question.slice(0, 50)}..."`
+          );
+        }
+      }
+
+      // Use supervisor's reconciled probability (weighted blend)
+      // 60% supervisor, 40% ensemble — supervisor has seen all reasoning
+      ensembleProb =
+        supervisorResult.reconciledProbability * 0.6 + ensembleProb * 0.4;
+
+      console.log(
+        `[predict] Supervisor adjusted by ${(supervisorResult.adjustmentMade * 100).toFixed(1)}% for "${market.question.slice(0, 50)}..." (${supervisorResult.disagreements.length} disagreements)`
+      );
+    }
+
+    // --- WHALE SIGNAL ---
+    // Check if smart money agrees with our model
+    const whaleSignal = await getWhaleSignal(
+      // Use platform_market_id for Polymarket conditionId lookup
+      market.id, // We'd need conditionId here — pass market.id for now
+      market.id
+    );
+
+    if (whaleSignal) {
+      const { adjustedProbability, whaleAdjustment } = applyWhaleAdjustment(
+        ensembleProb,
+        marketPrice,
+        whaleSignal
+      );
+      if (whaleAdjustment !== 0) {
+        ensembleProb = adjustedProbability;
+        console.log(
+          `[predict] Whale signal: ${whaleSignal.netDirection} (${whaleSignal.whaleCount} whales), adjusted by ${(whaleAdjustment * 100).toFixed(1)}%`
+        );
+      }
+    }
 
     // Calculate edge and EV
     const edge = ensembleProb - marketPrice;

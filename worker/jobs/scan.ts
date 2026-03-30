@@ -3,6 +3,7 @@
  */
 
 import { supabase, startPipelineRun, completePipelineRun } from "../lib/config.js";
+import { findArbOpportunities } from "../lib/arbitrage.js";
 
 const GAMMA_BASE_URL = "https://gamma-api.polymarket.com";
 const KALSHI_BASE_URL = "https://api.elections.kalshi.com/trade-api/v2";
@@ -119,8 +120,14 @@ export async function runScanJob(): Promise<void> {
       durationMs: duration,
     });
 
+    // --- ARBITRAGE SCAN ---
+    const arbOpps = await findArbOpportunities().catch((e) => {
+      console.error("[scan] Arbitrage scan failed:", e.message);
+      return [];
+    });
+
     console.log(
-      `[scan] ${polymarkets.length} poly + ${kalshiMarkets.length} kalshi → ${filtered.length} passed filters, ${anomalyCount} anomalies`
+      `[scan] ${polymarkets.length} poly + ${kalshiMarkets.length} kalshi → ${filtered.length} passed filters, ${anomalyCount} anomalies, ${arbOpps.length} arb opportunities`
     );
   } catch (error) {
     await completePipelineRun(runId, {
