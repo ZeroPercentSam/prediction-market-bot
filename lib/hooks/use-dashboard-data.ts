@@ -88,15 +88,13 @@ export function useLivePnl() {
 
         if (t.direction === "buy_yes") {
           currentPrice = Number(t.markets?.current_yes_price) || 0;
-          unrealizedPnl = entryPrice > 0 ? (currentPrice - entryPrice) * (positionSize / entryPrice) : 0;
-          unrealizedPnlPct = entryPrice > 0 ? ((currentPrice - entryPrice) / entryPrice) * 100 : 0;
         } else {
-          const entryNoPrice = 1 - entryPrice; // what we paid for NO
-          const currentNoPrice = Number(t.markets?.current_no_price) || (1 - Number(t.markets?.current_yes_price));
-          currentPrice = currentNoPrice;
-          unrealizedPnl = entryNoPrice > 0 ? (currentNoPrice - entryNoPrice) * (positionSize / entryNoPrice) : 0;
-          unrealizedPnlPct = entryNoPrice > 0 ? ((currentNoPrice - entryNoPrice) / entryNoPrice) * 100 : 0;
+          // entry_price for buy_no already stores the NO price paid
+          currentPrice = Number(t.markets?.current_no_price) || (1 - (Number(t.markets?.current_yes_price) || 0));
         }
+        // P&L = (currentPrice - entryPrice) / entryPrice * positionSize
+        unrealizedPnl = entryPrice > 0 ? ((currentPrice - entryPrice) / entryPrice) * positionSize : 0;
+        unrealizedPnlPct = entryPrice > 0 ? ((currentPrice - entryPrice) / entryPrice) * 100 : 0;
 
         return {
           tradeId: t.id,
@@ -304,14 +302,11 @@ export function useStrategyPerformance() {
         const unrealizedPnl = active.reduce((sum, t) => {
           const entryPrice = Number(t.entry_price) || 0;
           const positionSize = Number(t.position_size) || 0;
-          if (t.direction === "buy_yes") {
-            const currentPrice = Number(t.markets?.current_yes_price) || 0;
-            return sum + (entryPrice > 0 ? (currentPrice - entryPrice) * (positionSize / entryPrice) : 0);
-          } else {
-            const entryNoPrice = 1 - entryPrice;
-            const currentNoPrice = Number(t.markets?.current_no_price) || (1 - Number(t.markets?.current_yes_price));
-            return sum + (entryNoPrice > 0 ? (currentNoPrice - entryNoPrice) * (positionSize / entryNoPrice) : 0);
-          }
+          if (entryPrice <= 0) return sum;
+          const currentPrice = t.direction === "buy_yes"
+            ? (Number(t.markets?.current_yes_price) || 0)
+            : (Number(t.markets?.current_no_price) || (1 - (Number(t.markets?.current_yes_price) || 0)));
+          return sum + ((currentPrice - entryPrice) / entryPrice) * positionSize;
         }, 0);
 
         results[strategy] = {
@@ -331,14 +326,10 @@ export function useStrategyPerformance() {
             if (t.status === "filled") {
               const entryPrice = Number(t.entry_price) || 0;
               const positionSize = Number(t.position_size) || 0;
-              if (t.direction === "buy_yes") {
-                const currentPrice = Number(t.markets?.current_yes_price) || 0;
-                pnl = entryPrice > 0 ? (currentPrice - entryPrice) * (positionSize / entryPrice) : 0;
-              } else {
-                const entryNoPrice = 1 - entryPrice;
-                const currentNoPrice = Number(t.markets?.current_no_price) || (1 - Number(t.markets?.current_yes_price));
-                pnl = entryNoPrice > 0 ? (currentNoPrice - entryNoPrice) * (positionSize / entryNoPrice) : 0;
-              }
+              const currentPrice = t.direction === "buy_yes"
+                ? (Number(t.markets?.current_yes_price) || 0)
+                : (Number(t.markets?.current_no_price) || (1 - (Number(t.markets?.current_yes_price) || 0)));
+              pnl = entryPrice > 0 ? ((currentPrice - entryPrice) / entryPrice) * positionSize : 0;
             }
             return {
               id: t.id,

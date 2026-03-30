@@ -104,16 +104,10 @@ async function processBatch(trades: OpenTrade[]): Promise<{ updated: number; err
       let unrealizedPnl: number;
       let unrealizedPnlPct: number;
 
-      if (trade.direction === "buy_yes") {
-        // P&L = (currentYesPrice - entryPrice) * positionSize / entryPrice
-        unrealizedPnl = (currentYesPrice - entryPrice) * positionSize / entryPrice;
-        unrealizedPnlPct = entryPrice > 0 ? ((currentYesPrice - entryPrice) / entryPrice) * 100 : 0;
-      } else {
-        // buy_no: entryNoPrice = 1 - entryPrice
-        const entryNoPrice = 1 - entryPrice;
-        unrealizedPnl = (currentNoPrice - entryNoPrice) * positionSize / entryNoPrice;
-        unrealizedPnlPct = entryNoPrice > 0 ? ((currentNoPrice - entryNoPrice) / entryNoPrice) * 100 : 0;
-      }
+      // entry_price stores YES price for buy_yes, NO price for buy_no
+      const currentPrice = trade.direction === "buy_yes" ? currentYesPrice : currentNoPrice;
+      unrealizedPnl = entryPrice > 0 ? ((currentPrice - entryPrice) / entryPrice) * positionSize : 0;
+      unrealizedPnlPct = entryPrice > 0 ? ((currentPrice - entryPrice) / entryPrice) * 100 : 0;
 
       // Round to 2 decimal places for currency
       unrealizedPnl = Math.round(unrealizedPnl * 100) / 100;
