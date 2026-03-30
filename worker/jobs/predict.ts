@@ -18,6 +18,7 @@ import { queryAllModels, type AIModel, type ModelPrediction } from "../lib/openr
 import { calibrate, applyEvidencePenalties, loadCalibrationParams } from "../lib/calibration.js";
 import { runSupervisor, runResolutionSearch } from "../lib/supervisor.js";
 import { getWhaleSignal, applyWhaleAdjustment } from "../lib/whale-tracker.js";
+import { analyzeOrderbook, applyOrderbookAdjustment } from "../lib/orderbook.js";
 
 const PREDICTION_SYSTEM_PROMPT = `You are a prediction market analyst. Estimate the probability of an event occurring based on available evidence.
 
@@ -55,7 +56,7 @@ export async function runPredictJob(): Promise<void> {
     const { data: markets } = await supabase
       .from("markets")
       .select(`
-        id, question, current_yes_price, category,
+        id, question, current_yes_price, category, platform, platform_market_id,
         research_summaries(aggregate_sentiment, key_themes, narrative_gap)
       `)
       .eq("is_active", true)
@@ -112,6 +113,8 @@ async function predictMarket(
     question: string;
     current_yes_price: number;
     category: string;
+    platform: string;
+    platform_market_id: string;
     research_summaries: unknown;
   },
   modelWeights: Record<AIModel, number>,
@@ -198,7 +201,9 @@ What is the probability this resolves YES?`;
 
     // --- WHALE SIGNAL ---
     try {
-      const whaleSignal = await getWhaleSignal(market.id, market.id);
+      const whaleSignal = market.platform === "polymarket"
+        ? await getWhaleSignal(market.platform_market_id, market.id)
+        : null;
 
       if (whaleSignal) {
         const { adjustedProbability, whaleAdjustment } = applyWhaleAdjustment(
@@ -215,6 +220,41 @@ What is the probability this resolves YES?`;
       }
     } catch (e) {
       console.warn("[predict] Whale tracker failed (skipping):", e instanceof Error ? e.message : e);
+    }
+
+    // --- ORDERBOOK FLOW ANALYSIS ---
+    // Only for Polymarket markets (Kalshi doesn't expose full orderbook)
+    if (market.platform === "polymarket") {
+      try {
+        // We need the token_id — fetch from gamma API using conditionId
+        const gammaRes = await fetch(
+          `https://gamma-api.polymarket.com/markets?condition_id=${market.platform_market_id}&limit=1`,
+          { signal: AbortSignal.timeout(5_000) }
+        ).catch(() => null);
+
+        if (gammaRes?.ok) {
+          const gammaData = await gammaRes.json();
+          const gammaMarket = Array.isArray(gammaData) ? gammaData[0] : null;
+          if (gammaMarket?.clobTokenIds) {
+            const tokenIds = JSON.parse(gammaMarket.clobTokenIds);
+            if (tokenIds[0]) {
+              const obAnalysis = await analyzeOrderbook(tokenIds[0], market.id);
+              if (obAnalysis) {
+                const { adjustedProbability, orderbookAdjustment } =
+                  applyOrderbookAdjustment(ensembleProb, obAnalysis);
+                if (orderbookAdjustment !== 0) {
+                  ensembleProb = adjustedProbability;
+                  console.log(
+                    `[predict] Orderbook: ${obAnalysis.signal} (strength ${obAnalysis.signalStrength.toFixed(2)}), imbalance ${(obAnalysis.imbalance * 100).toFixed(1)}%, adjusted ${(orderbookAdjustment * 100).toFixed(1)}%`
+                  );
+                }
+              }
+            }
+          }
+        }
+      } catch (e) {
+        console.warn("[predict] Orderbook analysis failed (skipping):", e instanceof Error ? e.message : e);
+      }
     }
 
     // Calculate edge and EV
