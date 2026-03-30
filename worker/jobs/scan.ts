@@ -316,7 +316,7 @@ async function fetchPolymarkets(): Promise<NormalizedMarket[]> {
   const all: NormalizedMarket[] = [];
   for (let offset = 0; offset < 500; offset += 100) {
     const url = `${GAMMA_BASE_URL}/markets?closed=false&active=true&limit=100&offset=${offset}&order=volume24hr&ascending=false`;
-    const res = await fetch(url);
+    const res = await fetch(url, { signal: AbortSignal.timeout(30000) });
     if (!res.ok) break;
     const markets = await res.json();
     if (!Array.isArray(markets) || markets.length === 0) break;
@@ -364,7 +364,7 @@ async function fetchKalshi(): Promise<NormalizedMarket[]> {
       eventUrl.searchParams.set("limit", "100");
       if (eventCursor) eventUrl.searchParams.set("cursor", eventCursor);
 
-      const eventRes = await fetch(eventUrl.toString());
+      const eventRes = await fetch(eventUrl.toString(), { signal: AbortSignal.timeout(30000) });
       if (!eventRes.ok) break;
       const eventData = await eventRes.json();
       if (!eventData.events || eventData.events.length === 0) break;
@@ -388,7 +388,7 @@ async function fetchKalshi(): Promise<NormalizedMarket[]> {
     url.searchParams.set("limit", "100");
     if (cursor) url.searchParams.set("cursor", cursor);
 
-    const res = await fetch(url.toString());
+    const res = await fetch(url.toString(), { signal: AbortSignal.timeout(30000) });
     if (!res.ok) break;
     const data = await res.json();
     if (!data.markets || data.markets.length === 0) break;

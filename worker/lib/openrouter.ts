@@ -204,7 +204,7 @@ const MODEL_COSTS: Record<string, { input: number; output: number }> = {
   "anthropic/claude-sonnet-4": { input: 3.0, output: 15.0 },
   "openai/gpt-4o": { input: 2.5, output: 10.0 },
   "x-ai/grok-3-mini": { input: 0.3, output: 0.5 },
-  "google/gemini-2.5-flash-preview": { input: 0.15, output: 0.6 },
+  "google/gemini-3-flash-preview": { input: 0.15, output: 0.6 },
   "deepseek/deepseek-r1": { input: 0.55, output: 2.19 },
 };
 
