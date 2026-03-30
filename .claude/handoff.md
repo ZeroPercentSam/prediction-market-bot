@@ -1,76 +1,99 @@
 # Prediction Market Bot - Session Handoff
-**Date**: 2026-03-29
-**Session**: Full bug audit, 30+ file fix sweep, authentication, autonomous worker launch
+**Date**: 2026-03-30
+**Session**: Full system build-out — 3 strategies, live P&L, dashboard overhaul, architecture docs
 
 ---
 
 ## What Was Done This Session
 
-### Full Codebase Audit & Fix Sweep (30+ files modified)
+### Full Codebase Audit & 30+ File Fix Sweep
+- Fixed buy_no math (Kelly, edge calc, P&L) across all executors
+- Wired up Brier score, VaR, Sharpe annualization (were implemented but never called)
+- Added Supabase error checking on all 31+ DB operations
+- Fixed research pipeline to use real NewsAPI/Twitter data instead of LLM hallucinations
+- Fixed Kalshi price changes (was hardcoded 0), signal deduplication, real-time price fetching
+- Fixed kill switch to default safe on DB failure, actually check it during execution
+- Fixed Gemini model ID (google/gemini-2.5-flash-preview → google/gemini-3-flash-preview)
+- Fixed research_items source constraint to allow "ai" source
+- Fixed middleware to use Web Crypto API (Edge Runtime compatible)
+- Fixed Supabase client env var validation (was throwing on client-side)
+- Fixed all dashboard hooks to match actual DB schema (6 column name mismatches)
+- Fixed kill switch API to write correct key (kill_switch_active)
+- Fixed unrealized P&L formula for buy_no trades (was 100x-1000x inflated)
+- Fixed price display (4 decimal places instead of 2)
+- Added signal dedup in predict job (prevents duplicate positions across cycles)
 
-**Critical Math Fixes:**
-- `lib/math/kelly.ts` — Added `side: "yes" | "no"` parameter; buy_no now uses `p = 1 - probability` and correct NO odds. Input validation added (clamp to [0.01, 0.99]).
-- `worker/jobs/execute.ts` + `lib/pipeline/executor.ts` — Fixed buy_no edge calculation: `(1 - ensembleProb) - noPrice` instead of `noPrice - ensembleProb`. Kelly sizing passes correct side.
-- `lib/math/expected-value.ts` — Division-by-zero guard (clamps marketPrice to [0.01, 0.99]).
-- `worker/jobs/compound.ts` + `lib/pipeline/compounder.ts` — Fixed P&L for buy_no trades. Winning = `(1/entryPrice - 1) * positionSize`, losing = `-positionSize`.
+### 3 New Trading Strategies
+1. **Whale Scanner** (`worker/jobs/whale-scan.ts`) — Scans top 50 Polymarket markets every 10 min for whale activity. Stores wallets, trades, and conviction signals.
+2. **Arbitrage Bot** (`worker/jobs/arb-execute.ts`) — Cross-platform Poly/Kalshi paper trade execution. Validates with real-time prices, only executes when combined cost < 0.97.
+3. **Certainty Scraper** (`worker/jobs/certainty-scan.ts`) — Finds markets at 93%+ probability, verifies outcome with DeepSeek AI, places trades to capture remaining spread.
 
-**Research Pipeline (was generating hallucinated data):**
-- `worker/jobs/research.ts` — Now fetches real data from NewsAPI (`NEWS_API_KEY`) and Twitter v2 API (`TWITTER_BEARER_TOKEN`). LLM used only for sentiment classification on real data. AI fallback labeled `source: "ai"` with reliability 0.3.
-- `lib/pipeline/researcher.ts` — Fixed missing `await` on `callModel()`. AI research labeled correctly. Processing parallelized with `Promise.all`.
-- `lib/api/openrouter.ts` — Fixed missing `await` on `callModel()`. Added 30s request timeout.
-- `worker/lib/openrouter.ts` — Env var validation (fail fast). 200ms rate limiting between requests.
+### Live P&L Tracking
+- **Worker job** (`worker/jobs/pnl-update.ts`) — Runs every 5 min, fetches real-time prices from exchanges, updates unrealized P&L per trade, takes risk snapshots
+- **Dashboard hook** (`useLivePnl`) — Computes P&L from live market prices, polls every 30s
+- **All pages wired**: Overview (bankroll includes unrealized), Risk (exposure + loss limit include unrealized), Strategies (per-strategy unrealized), Analytics (equity curve + P&L chart get live endpoints), Header (unrealized badge)
 
-**Metrics & Math Wired Up (were stubbed/never called):**
-- `lib/math/brier.ts` — Returns `null` for empty data instead of misleading score of 0.
-- `lib/math/sharpe.ts` — Annualized with `sqrt(252)`. Profit factor capped at 999.
-- Brier score, `avg_edge_captured`, `avg_hold_time_hours` now actually computed in compound jobs (were hardcoded 0).
-- VaR wired up in executor (was implemented but never called).
-- Bankroll from config instead of hardcoded 10000.
+### Dashboard Overhaul
+- **Risk page**: Live Supabase data (was 100% mock), working kill switch toggle
+- **Settings page**: Functional save/reset (was static disabled inputs), snake_case↔camelCase key mapping
+- **Kill switch**: Working toggle in header and risk page, writes to correct DB key
+- **Charts**: Equity curve (AreaChart), Model accuracy (BarChart), Cumulative P&L (LineChart) — all Recharts with live data
+- **New /strategies page**: Per-strategy performance comparison (Prediction/Arbitrage/Certainty)
+- **Active trades**: Strategy column + filter buttons, live P&L per trade, 4dp price display
+- **Auto-refresh**: 30s polling on all data hooks
+- **Sidebar**: Live pipeline status from worker heartbeat
 
-**Scanning & Execution Fixes:**
-- `worker/jobs/scan.ts` — Kalshi price changes computed from snapshots (was hardcoded 0). Kalshi categories from event data. Market snapshots written after every scan. All thresholds configurable via `getConfig()`. Batch deduplication prevents upsert conflicts.
-- `worker/jobs/execute.ts` — Signal deduplication (no duplicate positions). Real-time price fetch from exchange APIs before execution. Concurrent position count queried once before loop. Live execution marks signals "skipped" instead of stuck "pending".
-- `lib/api/kalshi.ts` — Spread clamped to non-negative.
-- `lib/api/polymarket.ts` — 30s request timeouts. 100ms pagination delay.
+### Authentication
+- Middleware with Web Crypto API (Edge Runtime compatible)
+- Login page with password protection (default: `Quantbot1$`, override via `SITE_PASSWORD` env var)
+- 30-day httpOnly secure session cookie
 
-**Safety & Error Handling:**
-- `worker/lib/config.ts` — Env var validation on startup. Kill switch defaults to `true` (safe/halt) on DB failure.
-- `lib/pipeline/executor.ts` — Actually checks kill switch status (was hardcoded false).
-- All 5 worker job files — `.error` checks on every Supabase operation (31+ DB calls).
-- `worker/lib/arbitrage.ts` — Now calls `verifyMarketMatch` after keyword similarity check. Error logging instead of silent catch.
-- `worker/jobs/compound.ts` — Atomic upsert for metrics. Error logging in `retrainAllModels`. Batch calibration query (was N+1). Resolution detection uses exact price + heuristic.
+### Infrastructure
+- `worker/bootstrap.ts` — Entry point that loads .env.local and configures file logging
+- `start-worker.sh` / `stop-worker.sh` — Background process management with PID file
+- `SYSTEM-ARCHITECTURE.md` — Comprehensive 13-section architecture & feature document
+- 4 new Supabase migrations (002-005) — V2 tables, whale fix, arb support, P&L update
 
-**Infrastructure:**
-- `supabase/migrations/002_v2_tables.sql` — 8 new tables: `arb_opportunities`, `calibration_data`, `calibration_params`, `whale_wallets`, `whale_trades`, `whale_signals`, `orderbook_snapshots`, `flow_signals`. With indexes and cascading FKs.
-- `lib/supabase/client.ts` — Env var validation. Singleton server client.
-- `lib/supabase/queries.ts` — `getConfig` handles missing keys gracefully. `getActiveMarkets` has pagination.
-- `lib/supabase/dashboard-queries.ts` — Error context on all thrown errors.
-- `worker/lib/math/brier.ts` — Worker-local copy (worker tsconfig can't see parent lib/).
-
-### Authentication Layer Added
-- `middleware.ts` — Intercepts all requests, redirects unauthenticated users to `/login`. Validates session cookie (SHA-256 hash). Allows through: login, auth API, kill-switch API, static assets.
-- `app/api/auth/route.ts` — POST validates password, sets 30-day httpOnly secure cookie. DELETE clears session. Password: `Quantbot1$` (overridable via `SITE_PASSWORD` env var).
-- `app/login/page.tsx` — Dark-themed login page using existing shadcn components.
-- `components/layout/dashboard-shell.tsx` — Conditionally renders sidebar/header (login page gets clean fullscreen layout).
-
-### Autonomous Worker Running Locally
-- `worker/bootstrap.ts` — Entry point that loads `.env.local` and configures file logging before importing worker.
-- `start-worker.sh` / `stop-worker.sh` — Background process management with PID file.
-- All console output (log/error/warn) written to `logs/worker.log` with timestamps and log levels.
-- Worker runs independently of web app — no user session needed.
+### Database Migrations Applied
+All migrations have been run on the live Supabase instance:
+- `002_v2_tables.sql` — 8 new tables (arb_opportunities, calibration_data/params, whale_wallets/trades/signals, orderbook_snapshots, flow_signals)
+- `002a_whale_fix.sql` — Unique index on whale_signals.market_id
+- `003_arb_execute.sql` — Added notes + arb_opportunity_id to trades, new arb columns
+- `004_certainty_scan.sql` — Pipeline stage constraint update
+- `005_pnl_update.sql` — Pipeline stage constraint update
+- Also fixed: research_items source constraint (added 'ai'), arb_opportunities column rename (polymarket_market_id → poly_market_id)
 
 ---
 
 ## Current State
 
-### Worker Status: RUNNING (PID in logs/worker.pid)
-- Paper trading mode: ON
-- Scanning 933 markets every 5 minutes (500 Polymarket + 500 Kalshi)
-- Research every 15 minutes
-- AI predictions every 15 minutes (offset)
-- Paper trade execution every 5 minutes
-- Performance compounding every hour
-- Heartbeat every minute
+### Worker: RUNNING (10 jobs on cron)
+| Job | Schedule | Status |
+|-----|----------|--------|
+| Scan | Every 5 min | Working — 900+ markets per cycle |
+| Research | Every 15 min | Working — uses AI sentiment (NewsAPI/Twitter keys not set) |
+| Predict | Every 15 min | Working — 5-model ensemble with whale adjustments |
+| Execute | Every 5 min | Working — paper trading with dedup |
+| Arb Execute | Every 5 min | Working — no arb opportunities found yet |
+| Compound | Every hour | Working |
+| Whale Scan | Every 10 min | Working — 42 signals, 391 trades per scan |
+| Certainty Scan | Every 10 min | Working — 10 trades placed |
+| P&L Update | Every 5 min | Working — updates unrealized P&L from live prices |
+| Heartbeat | Every minute | Working |
+
+### Dashboard: LIVE on Vercel
+- URL: https://prediction-market-bot-chi.vercel.app
+- Password: `Quantbot1$`
+- All 11 pages connected to live Supabase data
+- Auto-refresh polling on all hooks
+
+### Database Counts (as of session end)
+- 11,957 markets tracked
+- 211 predictions
+- 25 trades (15 prediction + 10 certainty)
+- 247 whale wallets, 1,564 whale trades
+- 575 market snapshots
+- 216 pipeline runs
 
 ### Commands
 ```bash
@@ -79,13 +102,11 @@ tail -f logs/worker.log     # Watch live activity
 ./start-worker.sh           # Start it again
 ```
 
-### Deployment
-- **Dashboard**: Vercel (https://prediction-market-bot-chi.vercel.app) — password protected
-- **Worker**: Running locally via `start-worker.sh` (can move to Railway for 24/7)
-- **Database**: Supabase — 22+ tables including V2 migration
-- **GitHub**: https://github.com/ZeroPercentSam/prediction-market-bot
+### GitHub
+- Repo: https://github.com/ZeroPercentSam/prediction-market-bot
+- All code pushed and up to date
 
-### Environment Variables (in .env.local)
+### Environment Variables
 - `NEXT_PUBLIC_SUPABASE_URL` ✓
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY` ✓
 - `SUPABASE_SERVICE_ROLE_KEY` ✓
@@ -96,17 +117,18 @@ tail -f logs/worker.log     # Watch live activity
 - `NEWS_API_KEY` — empty (research falls back to AI)
 - `SITE_PASSWORD` — defaults to `Quantbot1$`
 
-### Known Limitations
+---
+
+## Known Limitations
 - Live trading not implemented (paper only) — execute.ts marks live signals as "skipped"
 - Twitter/News research falls back to AI when API keys not set
-- Railway deployment still blocked on API token (not needed while running locally)
 - Worker stops when Mac sleeps/shuts down (Railway would solve this)
-
----
+- Some pre-existing duplicate trades from before dedup was deployed
+- Existing trades with $0.00 entry prices from early runs (before live price fetch was added)
 
 ## Next Steps
 1. **Set NEWS_API_KEY and TWITTER_BEARER_TOKEN** for real research data
-2. **Run V2 migration** (`002_v2_tables.sql`) in Supabase dashboard
-3. **Monitor paper trading performance** via dashboard and `logs/worker.log`
-4. **Deploy to Railway** when ready for 24/7 operation
-5. **Implement live execution** when paper trading results are satisfactory
+2. **Deploy to Railway** for 24/7 operation
+3. **Monitor paper trading performance** — let it run for a week
+4. **Implement live execution** when results are satisfactory (Polymarket CLOB + Kalshi REST)
+5. **Clean up duplicate/bad trades** from early runs
