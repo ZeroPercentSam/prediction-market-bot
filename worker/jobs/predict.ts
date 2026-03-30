@@ -154,11 +154,12 @@ What is the probability this resolves YES?`;
       probability: calibrate(est.probability, est.model, market.category || "all"),
     }));
 
-    // Compute weighted ensemble
+    // Compute weighted ensemble (skip low-confidence models to reduce noise)
+    const MIN_CONFIDENCE = 0.3;
     let totalWeight = 0;
     let weightedSum = 0;
     for (const est of calibratedEstimates) {
-      if (est.confidence === 0) continue;
+      if (est.confidence < MIN_CONFIDENCE) continue;
       const w = (modelWeights[est.model] || 0.2) * est.confidence;
       weightedSum += est.probability * w;
       totalWeight += w;
@@ -167,7 +168,7 @@ What is the probability this resolves YES?`;
 
     // Compute ensemble spread (disagreement)
     const validProbs = calibratedEstimates
-      .filter((e) => e.confidence > 0)
+      .filter((e) => e.confidence >= MIN_CONFIDENCE)
       .map((e) => e.probability);
     const mean = validProbs.reduce((s, p) => s + p, 0) / Math.max(1, validProbs.length);
     const spread = Math.sqrt(
@@ -205,11 +206,20 @@ What is the probability this resolves YES?`;
           ).catch(() => {});
         }
 
-        ensembleProb =
-          supervisorResult.reconciledProbability * 0.6 + ensembleProb * 0.4;
+        // Cap supervisor adjustment to 3x the model disagreement (prevents overcorrection)
+        const maxAdjustment = spread * 3;
+        let reconciledProb = supervisorResult.reconciledProbability;
+        const rawAdjustment = reconciledProb - ensembleProb;
+        if (Math.abs(rawAdjustment) > maxAdjustment) {
+          reconciledProb = ensembleProb + Math.sign(rawAdjustment) * maxAdjustment;
+        }
+
+        // Proportional blending: supervisor weight scales with disagreement (0% at spread=0, 60% at spread≥0.15)
+        const supervisorWeight = Math.min(0.6, (spread - 0.05) / (0.15 - 0.05) * 0.6);
+        ensembleProb = reconciledProb * supervisorWeight + ensembleProb * (1 - supervisorWeight);
 
         console.log(
-          `[predict] Supervisor adjusted by ${(supervisorResult.adjustmentMade * 100).toFixed(1)}% for "${market.question.slice(0, 50)}..."`
+          `[predict] Supervisor: weight=${(supervisorWeight * 100).toFixed(0)}%, adjusted ${(rawAdjustment * 100).toFixed(1)}% (capped to ±${(maxAdjustment * 100).toFixed(1)}%) for "${market.question.slice(0, 50)}..."`
         );
       }
     } catch (e) {
