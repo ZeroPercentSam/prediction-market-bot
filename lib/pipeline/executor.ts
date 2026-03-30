@@ -6,6 +6,8 @@
  */
 
 import { calculateKelly } from "@/lib/math/kelly";
+import { calculateVaR } from "@/lib/math/var";
+import { isKillSwitchActive } from "@/lib/supabase/queries";
 import { createServerClient } from "@/lib/supabase/client";
 
 interface ExecutionConfig {
@@ -91,10 +93,11 @@ export async function runExecution(
         ? Number(market.current_yes_price)
         : Number(market.current_no_price);
 
+    const ensembleProb = Number(prediction.ensemble_probability);
     const currentEdge =
       signal.direction === "buy_yes"
-        ? Number(prediction.ensemble_probability) - currentPrice
-        : currentPrice - Number(prediction.ensemble_probability);
+        ? ensembleProb - currentPrice
+        : (1 - ensembleProb) - currentPrice;
 
     if (Math.abs(currentEdge) < 0.02) {
       // Edge has shrunk below 2%
@@ -110,12 +113,14 @@ export async function runExecution(
     }
 
     // Calculate position size with Kelly
+    const side = signal.direction === "buy_yes" ? "yes" : "no";
     const kelly = calculateKelly(
-      Number(prediction.ensemble_probability),
+      ensembleProb,
       currentPrice,
       config.bankroll,
       config.kellyFraction,
-      config.maxPositionSizePct
+      config.maxPositionSizePct,
+      side as "yes" | "no"
     );
 
     if (kelly.positionSize < 1) {
@@ -173,8 +178,11 @@ export async function runExecution(
         `PAPER TRADE: ${signal.direction} on "${market.question}" at $${currentPrice.toFixed(4)}, size $${kelly.positionSize.toFixed(2)} (${(kelly.positionSizePct * 100).toFixed(1)}% of bankroll)`
       );
     } else {
-      // TODO: Live execution via Polymarket/Kalshi APIs
-      // For now, skip live trades and log
+      // Live execution not yet implemented — mark signal as skipped
+      await supabase
+        .from("trade_signals")
+        .update({ status: "skipped", skip_reason: "live_trading_not_implemented" })
+        .eq("id", signal.id);
       result.tradesSkipped++;
       result.reasons.push(
         `Signal ${signal.id}: live trading not yet implemented`
@@ -262,6 +270,21 @@ async function takeRiskSnapshot(config: ExecutionConfig) {
     0
   );
 
+  // Calculate VaR from recent trade returns
+  const { data: recentTrades } = await supabase
+    .from("trades")
+    .select("pnl_pct")
+    .eq("status", "settled")
+    .not("pnl_pct", "is", null)
+    .order("created_at", { ascending: false })
+    .limit(100);
+
+  const dailyReturns = (recentTrades || []).map((t) => Number(t.pnl_pct) || 0);
+  const varResult = calculateVaR(totalExposure, dailyReturns);
+
+  // Check kill switch status
+  const killSwitchActive = await isKillSwitchActive();
+
   await supabase.from("risk_snapshots").insert({
     bankroll: config.bankroll,
     daily_pnl: dailyPnl,
@@ -269,7 +292,7 @@ async function takeRiskSnapshot(config: ExecutionConfig) {
     open_positions: openCount || 0,
     total_exposure: totalExposure,
     exposure_by_category: exposureByCategory,
-    var_value: 0, // TODO: Calculate VaR from historical returns
-    kill_switch_active: false,
+    var_value: varResult.var95,
+    kill_switch_active: killSwitchActive,
   });
 }

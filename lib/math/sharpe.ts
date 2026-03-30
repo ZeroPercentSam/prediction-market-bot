@@ -19,7 +19,8 @@ export function calculateSharpeRatio(
 
   if (stdDev === 0) return 0;
 
-  return (mean - riskFreeRate) / stdDev;
+  const dailySharpe = (mean - riskFreeRate) / stdDev;
+  return dailySharpe * Math.sqrt(252);
 }
 
 /**
@@ -49,6 +50,6 @@ export function calculateProfitFactor(pnls: number[]): number {
     pnls.filter((p) => p < 0).reduce((s, p) => s + p, 0)
   );
 
-  if (grossLoss === 0) return grossProfit > 0 ? Infinity : 0;
+  if (grossLoss === 0) return grossProfit > 0 ? 999 : 0;
   return grossProfit / grossLoss;
 }

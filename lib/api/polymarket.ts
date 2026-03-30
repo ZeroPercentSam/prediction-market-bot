@@ -82,6 +82,7 @@ export async function fetchPolymarketMarkets(
 
   const response = await fetch(url.toString(), {
     headers: { "Accept": "application/json" },
+    signal: AbortSignal.timeout(30000),
   });
 
   if (!response.ok) {
@@ -105,6 +106,9 @@ export async function fetchAllPolymarketMarkets(
   let offset = 0;
 
   while (allMarkets.length < maxMarkets) {
+    if (offset > 0) {
+      await new Promise((r) => setTimeout(r, 100)); // rate limit delay between pages
+    }
     const batch = await fetchPolymarketMarkets(pageSize, offset);
     if (batch.length === 0) break;
     allMarkets.push(...batch);
@@ -120,7 +124,7 @@ export async function fetchAllPolymarketMarkets(
  */
 export async function fetchOrderBook(tokenId: string) {
   const url = `${CLOB_BASE_URL}/book?token_id=${tokenId}`;
-  const response = await fetch(url);
+  const response = await fetch(url, { signal: AbortSignal.timeout(30000) });
 
   if (!response.ok) {
     throw new Error(`CLOB API error: ${response.status}`);
@@ -134,7 +138,7 @@ export async function fetchOrderBook(tokenId: string) {
  */
 export async function fetchMidpoint(tokenId: string): Promise<number> {
   const url = `${CLOB_BASE_URL}/midpoint?token_id=${tokenId}`;
-  const response = await fetch(url);
+  const response = await fetch(url, { signal: AbortSignal.timeout(30000) });
 
   if (!response.ok) {
     throw new Error(`CLOB API error: ${response.status}`);

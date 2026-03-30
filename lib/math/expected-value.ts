@@ -19,16 +19,19 @@ export function calculateExpectedValue(
   modelProbability: number,
   marketPrice: number
 ): EVResult {
-  const b = (1 / marketPrice) - 1;
+  // Guard against division by zero when marketPrice is 0 or 1
+  const safePrice = Math.min(0.99, Math.max(0.01, marketPrice));
+
+  const b = (1 / safePrice) - 1;
   const ev = modelProbability * b - (1 - modelProbability);
-  const edge = modelProbability - marketPrice;
+  const edge = modelProbability - safePrice;
 
   return {
     expectedValue: ev,
     edge,
     edgePct: edge * 100,
-    decimalOdds: 1 / marketPrice,
-    impliedProbability: marketPrice,
+    decimalOdds: 1 / safePrice,
+    impliedProbability: safePrice,
   };
 }
 

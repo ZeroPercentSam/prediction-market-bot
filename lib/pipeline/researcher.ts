@@ -41,7 +41,7 @@ export interface ResearchResult {
 }
 
 interface ResearchItemResult {
-  source: "news" | "web";
+  source: "news" | "twitter" | "web" | "ai";
   sourceUrl: string;
   title: string;
   content: string;
@@ -64,19 +64,21 @@ export async function runResearch(
   config: Partial<ResearchConfig> = {}
 ): Promise<ResearchResult[]> {
   const cfg = { ...DEFAULT_RESEARCH_CONFIG, ...config };
-  const results: ResearchResult[] = [];
+  // Process markets in parallel where possible
+  const results = await Promise.all(
+    markets.map(async (market) => {
+      try {
+        const result = await researchMarket(market, cfg);
+        await storeResearch(result);
+        return result;
+      } catch (error) {
+        console.error(`[Researcher] Failed for market ${market.id}:`, error);
+        return null;
+      }
+    })
+  );
 
-  for (const market of markets) {
-    try {
-      const result = await researchMarket(market, cfg);
-      results.push(result);
-      await storeResearch(result);
-    } catch (error) {
-      console.error(`[Researcher] Failed for market ${market.id}:`, error);
-    }
-  }
-
-  return results;
+  return results.filter((r): r is ResearchResult => r !== null);
 }
 
 /**
@@ -94,19 +96,18 @@ async function researchMarket(
   // Gather news articles
   const newsItems = await fetchNewsArticles(market.question, cfg);
 
-  // Classify sentiment for each item using AI
-  const classifiedItems: ResearchItemResult[] = [];
-  for (const item of newsItems.slice(0, cfg.maxSourcesPerMarket)) {
-    const sentiment = await classifySentiment(
-      item.title,
-      item.content,
-      market.question
-    );
-    classifiedItems.push({
-      ...item,
-      ...sentiment,
-    });
-  }
+  // Classify sentiment for each item using AI (in parallel)
+  const itemsToClassify = newsItems.slice(0, cfg.maxSourcesPerMarket);
+  const classifiedItems = await Promise.all(
+    itemsToClassify.map(async (item) => {
+      const sentiment = await classifySentiment(
+        item.title,
+        item.content,
+        market.question
+      );
+      return { ...item, ...sentiment };
+    })
+  );
 
   // Compute aggregate sentiment
   const summary = computeSummary(
@@ -129,7 +130,7 @@ async function fetchNewsArticles(
   cfg: ResearchConfig
 ): Promise<
   Array<{
-    source: "news";
+    source: "news" | "twitter" | "web" | "ai";
     sourceUrl: string;
     title: string;
     content: string;
@@ -191,7 +192,7 @@ async function generateAIResearch(
   question: string
 ): Promise<
   Array<{
-    source: "news";
+    source: "ai";
     sourceUrl: string;
     title: string;
     content: string;
@@ -200,7 +201,7 @@ async function generateAIResearch(
   }>
 > {
   try {
-    const result = client.callModel({
+    const result = await client.callModel({
       model: SENTIMENT_MODEL,
       instructions:
         "You are a research assistant. Given a prediction market question, provide 3-5 key data points or recent developments relevant to this question. For each, provide a brief factual summary. Format each as: TITLE: <title>\\nCONTENT: <2-3 sentence summary>\\n---",
@@ -216,12 +217,12 @@ async function generateAIResearch(
       const titleMatch = item.match(/TITLE:\s*(.+)/i);
       const contentMatch = item.match(/CONTENT:\s*([\s\S]+)/i);
       return {
-        source: "news" as const,
+        source: "ai" as const,
         sourceUrl: "",
         title: titleMatch?.[1]?.trim() || "AI Research Summary",
         content: contentMatch?.[1]?.trim() || item.trim(),
         publishedAt: new Date().toISOString(),
-        reliability: 0.6, // AI-generated gets lower reliability
+        reliability: 0.3, // AI-generated gets low reliability
       };
     });
   } catch {
@@ -238,7 +239,7 @@ async function classifySentiment(
   marketQuestion: string
 ): Promise<{ sentiment: Sentiment; sentimentScore: number }> {
   try {
-    const result = client.callModel({
+    const result = await client.callModel({
       model: SENTIMENT_MODEL,
       instructions:
         'You are a sentiment classifier. Given a news item and a prediction market question, determine if the news makes the market event MORE likely (bullish), LESS likely (bearish), or has no clear impact (neutral). Respond with exactly: SENTIMENT: <bullish|bearish|neutral>\\nSCORE: <number from -1.0 to 1.0>',

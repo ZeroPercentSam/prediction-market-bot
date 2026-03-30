@@ -20,11 +20,19 @@ export function calculateKelly(
   marketPrice: number,
   bankroll: number,
   kellyFraction: number = 0.25,
-  maxPositionPct: number = 0.05
+  maxPositionPct: number = 0.05,
+  side: "yes" | "no" = "yes"
 ): KellyResult {
-  // b = decimal odds - 1 = (1/marketPrice) - 1
-  const b = (1 / marketPrice) - 1;
-  const p = probability;
+  // Input validation: clamp to safe ranges
+  const clampedProb = Math.min(0.99, Math.max(0.01, probability));
+  const clampedPrice = Math.min(0.99, Math.max(0.01, marketPrice));
+
+  // For buy_no: we're betting on the event NOT happening
+  // p = probability of NO outcome, b = payout odds for NO shares
+  const p = side === "no" ? 1 - clampedProb : clampedProb;
+  const b = side === "no"
+    ? (1 / (1 - clampedPrice)) - 1
+    : (1 / clampedPrice) - 1;
   const q = 1 - p;
 
   // Full Kelly fraction

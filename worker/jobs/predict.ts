@@ -291,7 +291,7 @@ What is the probability this resolves YES?`;
     }
 
     // Store prediction
-    const { data: pred } = await supabase
+    const { data: pred, error: predError } = await supabase
       .from("predictions")
       .insert({
         market_id: market.id,
@@ -306,10 +306,13 @@ What is the probability this resolves YES?`;
       })
       .select("id")
       .single();
+    if (predError) {
+      console.error(`[predict] Failed to insert prediction:`, predError.message);
+    }
 
     if (pred) {
       // Store model estimates
-      await supabase.from("model_estimates").insert(
+      const { error: estError } = await supabase.from("model_estimates").insert(
         calibratedEstimates.map((est) => ({
           prediction_id: pred.id,
           model: est.model,
@@ -321,10 +324,13 @@ What is the probability this resolves YES?`;
           cost_usd: est.costUsd,
         }))
       );
+      if (estError) {
+        console.error(`[predict] Failed to insert model_estimates:`, estError.message);
+      }
 
       // Create trade signal if generated
       if (signalGenerated && signalDirection) {
-        await supabase.from("trade_signals").insert({
+        const { error: sigError } = await supabase.from("trade_signals").insert({
           prediction_id: pred.id,
           market_id: market.id,
           direction: signalDirection,
@@ -333,6 +339,9 @@ What is the probability this resolves YES?`;
           recommended_size: 0,
           status: "pending",
         });
+        if (sigError) {
+          console.error(`[predict] Failed to insert trade_signal:`, sigError.message);
+        }
       }
     }
 

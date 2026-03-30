@@ -10,7 +10,27 @@
  */
 
 const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
-const API_KEY = process.env.OPENROUTER_API_KEY!;
+
+// Fail fast if API key is missing
+if (!process.env.OPENROUTER_API_KEY) {
+  throw new Error(
+    "[OpenRouter] OPENROUTER_API_KEY is not set. Add it to your environment variables."
+  );
+}
+const API_KEY = process.env.OPENROUTER_API_KEY;
+
+// Basic rate limiting: minimum delay between concurrent requests
+const MIN_REQUEST_INTERVAL_MS = 200;
+let lastRequestTime = 0;
+
+async function rateLimitDelay(): Promise<void> {
+  const now = Date.now();
+  const elapsed = now - lastRequestTime;
+  if (elapsed < MIN_REQUEST_INTERVAL_MS) {
+    await new Promise((r) => setTimeout(r, MIN_REQUEST_INTERVAL_MS - elapsed));
+  }
+  lastRequestTime = Date.now();
+}
 
 export type AIModel = "claude" | "gpt4o" | "grok" | "gemini" | "deepseek";
 
@@ -47,6 +67,7 @@ export async function queryModel(
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
+      await rateLimitDelay();
       const controller = new AbortController();
       const timeout = setTimeout(
         () => controller.abort(),

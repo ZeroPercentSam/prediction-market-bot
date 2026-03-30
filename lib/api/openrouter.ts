@@ -51,13 +51,21 @@ export async function queryModel(
   );
 
   try {
-    const result = client.callModel({
+    const callPromise = client.callModel({
       model: modelId,
       instructions: PREDICTION_SYSTEM_PROMPT,
       input: prompt,
       temperature: 0.3,
       maxOutputTokens: 1000,
     });
+
+    // Enforce a 30-second timeout on the model call
+    const result = await Promise.race([
+      callPromise,
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("Request timed out after 30s")), 30_000)
+      ),
+    ]);
 
     const text = await result.getText();
     const response = await result.getResponse();

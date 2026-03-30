@@ -204,7 +204,7 @@ function parseKalshiMarket(market: KalshiMarket): ParsedKalshiMarket {
     noPrice: 1 - yesPrice,
     bestBid: yesBid,
     bestAsk: yesAsk,
-    spread: yesAsk - yesBid,
+    spread: Math.max(0, yesAsk - yesBid),
     volume24h: parseFloat(market.volume_24h_fp || "0"),
     totalVolume: parseFloat(market.volume_fp || "0"),
     liquidity: parseFloat(market.liquidity_dollars || "0"),

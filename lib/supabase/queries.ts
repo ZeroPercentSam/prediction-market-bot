@@ -56,14 +56,15 @@ export async function upsertMarkets(
   return data;
 }
 
-export async function getActiveMarkets() {
+export async function getActiveMarkets(limit: number = 500) {
   const supabase = createServerClient();
 
   const { data, error } = await supabase
     .from("markets")
     .select("*")
     .eq("is_active", true)
-    .order("volume_24h", { ascending: false });
+    .order("volume_24h", { ascending: false })
+    .limit(limit);
 
   if (error) throw new Error(`Fetch markets failed: ${error.message}`);
   return data;
@@ -206,7 +207,7 @@ export async function getRecentPipelineRuns(limit: number = 20) {
 // System Config
 // ============================================
 
-export async function getConfig(key: string) {
+export async function getConfig(key: string, defaultValue: unknown = null) {
   const supabase = createServerClient();
 
   const { data, error } = await supabase
@@ -215,7 +216,11 @@ export async function getConfig(key: string) {
     .eq("key", key)
     .single();
 
-  if (error) throw new Error(`Fetch config failed: ${error.message}`);
+  if (error) {
+    // PGRST116 = "not found" from PostgREST .single()
+    if (error.code === "PGRST116") return defaultValue;
+    throw new Error(`Fetch config '${key}' failed: ${error.message}`);
+  }
   return data.value;
 }
 
@@ -233,6 +238,6 @@ export async function setConfig(key: string, value: unknown) {
 }
 
 export async function isKillSwitchActive(): Promise<boolean> {
-  const value = await getConfig("kill_switch_active");
+  const value = await getConfig("kill_switch_active", false);
   return value === true || value === "true";
 }

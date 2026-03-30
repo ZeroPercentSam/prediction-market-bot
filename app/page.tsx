@@ -17,7 +17,9 @@ import {
   useDashboardStats,
   usePipelineStatus,
   usePipelineRuns,
+  useEquityCurve,
 } from "@/lib/hooks/use-dashboard-data";
+import { EquityCurve } from "@/components/charts/equity-curve";
 import type { PipelineStage } from "@/types";
 
 const stageIcons: Record<PipelineStage, typeof Search> = {
@@ -53,6 +55,7 @@ export default function OverviewPage() {
   const { data: pipelineStatuses, isLoading: pipelineLoading } =
     usePipelineStatus();
   const { data: pipelineRuns, isLoading: runsLoading } = usePipelineRuns(10);
+  const { data: equityCurveData } = useEquityCurve();
 
   const isLoading = statsLoading || pipelineLoading || runsLoading;
 
@@ -217,11 +220,7 @@ export default function OverviewPage() {
           <h3 className="mb-4 text-sm font-medium text-zinc-400">
             Equity Curve
           </h3>
-          <div className="flex h-64 items-center justify-center rounded-lg border border-dashed border-zinc-700">
-            <p className="text-sm text-zinc-500">
-              Chart will render with live data from Supabase
-            </p>
-          </div>
+          <EquityCurve data={equityCurveData ?? []} />
         </Card>
       </div>
     </div>

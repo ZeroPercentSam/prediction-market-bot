@@ -4,18 +4,34 @@
 
 import { createClient } from "@supabase/supabase-js";
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+if (!supabaseUrl) {
+  throw new Error("[config] NEXT_PUBLIC_SUPABASE_URL is not set — cannot start worker");
+}
+if (!serviceRoleKey) {
+  throw new Error("[config] SUPABASE_SERVICE_ROLE_KEY is not set — cannot start worker");
+}
 
 export const supabase = createClient(supabaseUrl, serviceRoleKey);
 
 export async function isKillSwitchActive(): Promise<boolean> {
-  const { data } = await supabase
-    .from("system_config")
-    .select("value")
-    .eq("key", "kill_switch_active")
-    .single();
-  return data?.value === true || data?.value === "true";
+  try {
+    const { data, error } = await supabase
+      .from("system_config")
+      .select("value")
+      .eq("key", "kill_switch_active")
+      .single();
+    if (error) {
+      console.error("[config] Kill switch check failed (defaulting to ACTIVE for safety):", error.message);
+      return true;
+    }
+    return data?.value === true || data?.value === "true";
+  } catch (e) {
+    console.error("[config] Kill switch check threw (defaulting to ACTIVE for safety):", e instanceof Error ? e.message : e);
+    return true;
+  }
 }
 
 export async function getConfig(key: string): Promise<unknown> {
@@ -31,7 +47,7 @@ export async function writeHeartbeat(): Promise<void> {
   await supabase.from("system_config").upsert(
     {
       key: "worker_heartbeat",
-      value: JSON.parse(JSON.stringify(new Date().toISOString())),
+      value: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     },
     { onConflict: "key" }

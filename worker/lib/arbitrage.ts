@@ -59,6 +59,17 @@ export async function findArbOpportunities(): Promise<ArbOpportunity[]> {
       const similarity = calculateSimilarity(polyQ, kalshiQ);
       if (similarity < 0.4) continue;
 
+      // Verify with AI that markets are truly the same event
+      let matchVerified = false;
+      try {
+        const match = await verifyMarketMatch(poly.question, kalshi.question);
+        if (!match.isMatch || match.confidence < 0.7) continue;
+        matchVerified = true;
+      } catch (e) {
+        console.warn(`[arbitrage] Market match verification failed, skipping pair:`, e instanceof Error ? e.message : e);
+        continue;
+      }
+
       // Check for arbitrage: buy YES on cheaper, NO on more expensive
       // Arb exists if: cheaperYES + cheaperNO < 1.0 across platforms
       const polyNo = Number(poly.current_no_price) || 1 - polyPrice;
@@ -68,6 +79,10 @@ export async function findArbOpportunities(): Promise<ArbOpportunity[]> {
       const combined1 = polyPrice + kalshiNo;
       if (combined1 < 0.97) {
         // 3% minimum after fees
+        const profit1 = ((1 - combined1) / combined1) * 100;
+        console.log(
+          `[arbitrage] ARB DETECTED: Poly '${poly.question}' vs Kalshi '${kalshi.question}' — combined: $${combined1.toFixed(4)}, profit: ${profit1.toFixed(2)}% (buy_poly_yes + buy_kalshi_no)`
+        );
         opportunities.push({
           polymarketMarketId: poly.id,
           kalshiMarketId: kalshi.id,
@@ -77,7 +92,7 @@ export async function findArbOpportunities(): Promise<ArbOpportunity[]> {
           kalshiYesPrice: kalshiPrice,
           spread: Math.abs(polyPrice - kalshiPrice),
           combinedPrice: combined1,
-          potentialReturn: ((1 - combined1) / combined1) * 100,
+          potentialReturn: profit1,
           direction: "buy_poly_yes_kalshi_no",
         });
       }
@@ -85,6 +100,10 @@ export async function findArbOpportunities(): Promise<ArbOpportunity[]> {
       // Strategy 2: Buy NO on Poly + YES on Kalshi
       const combined2 = polyNo + kalshiPrice;
       if (combined2 < 0.97) {
+        const profit2 = ((1 - combined2) / combined2) * 100;
+        console.log(
+          `[arbitrage] ARB DETECTED: Poly '${poly.question}' vs Kalshi '${kalshi.question}' — combined: $${combined2.toFixed(4)}, profit: ${profit2.toFixed(2)}% (buy_poly_no + buy_kalshi_yes)`
+        );
         opportunities.push({
           polymarketMarketId: poly.id,
           kalshiMarketId: kalshi.id,
@@ -94,7 +113,7 @@ export async function findArbOpportunities(): Promise<ArbOpportunity[]> {
           kalshiYesPrice: kalshiPrice,
           spread: Math.abs(polyPrice - kalshiPrice),
           combinedPrice: combined2,
-          potentialReturn: ((1 - combined2) / combined2) * 100,
+          potentialReturn: profit2,
           direction: "buy_poly_no_kalshi_yes",
         });
       }
@@ -167,8 +186,10 @@ function calculateSimilarity(a: string, b: string): number {
 async function storeOpportunities(opps: ArbOpportunity[]): Promise<void> {
   try {
     const rows = opps.map((o) => ({
-      polymarket_market_id: o.polymarketMarketId,
+      poly_market_id: o.polymarketMarketId,
       kalshi_market_id: o.kalshiMarketId,
+      poly_yes_price: o.polyYesPrice,
+      kalshi_yes_price: o.kalshiYesPrice,
       spread: o.spread,
       combined_price: o.combinedPrice,
       potential_return: o.potentialReturn,
@@ -177,8 +198,11 @@ async function storeOpportunities(opps: ArbOpportunity[]): Promise<void> {
       detected_at: new Date().toISOString(),
     }));
 
-    await supabase.from("arb_opportunities").insert(rows);
-  } catch {
-    // Table might not exist yet
+    const { error } = await supabase.from("arb_opportunities").insert(rows);
+    if (error) {
+      console.error(`[arbitrage] Failed to store opportunities:`, error.message);
+    }
+  } catch (e) {
+    console.error(`[arbitrage] storeOpportunities threw:`, e instanceof Error ? e.message : e);
   }
 }

@@ -11,7 +11,15 @@ import {
   Brain,
   Loader2,
 } from "lucide-react";
-import { usePerformanceMetrics } from "@/lib/hooks/use-dashboard-data";
+import {
+  usePerformanceMetrics,
+  useEquityCurve,
+  useModelAccuracy,
+  usePnlHistory,
+} from "@/lib/hooks/use-dashboard-data";
+import { EquityCurve } from "@/components/charts/equity-curve";
+import { ModelAccuracy } from "@/components/charts/model-accuracy";
+import { PnlChart } from "@/components/charts/pnl-chart";
 
 type Period = "7d" | "30d" | "90d" | "all";
 
@@ -80,6 +88,9 @@ function StatCard({
 
 export default function AnalyticsPage() {
   const { data: allMetrics, isLoading, error } = usePerformanceMetrics();
+  const { data: equityCurveData } = useEquityCurve();
+  const { data: modelAccuracyData } = useModelAccuracy();
+  const { data: pnlHistoryData } = usePnlHistory();
   const [selectedPeriod, setSelectedPeriod] = useState<Period>("30d");
 
   if (isLoading) return <LoadingSkeleton />;
@@ -259,17 +270,22 @@ export default function AnalyticsPage() {
         </Card>
       )}
 
-      {/* Equity Curve Placeholder */}
-      <Card className="border-zinc-800 bg-zinc-900/50 p-6">
-        <h3 className="mb-4 text-sm font-medium text-zinc-400">
-          Equity Curve
-        </h3>
-        <div className="flex h-64 items-center justify-center rounded-lg border border-dashed border-zinc-700">
-          <p className="text-sm text-zinc-500">
-            Equity curve chart will render once enough trade data accumulates.
-          </p>
-        </div>
-      </Card>
+      {/* Equity Curve & Cumulative P&L */}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <Card className="border-zinc-800 bg-zinc-900/50 p-6">
+          <h3 className="mb-4 text-sm font-medium text-zinc-400">
+            Equity Curve
+          </h3>
+          <EquityCurve data={equityCurveData ?? []} />
+        </Card>
+
+        <Card className="border-zinc-800 bg-zinc-900/50 p-6">
+          <h3 className="mb-4 text-sm font-medium text-zinc-400">
+            Cumulative P&L
+          </h3>
+          <PnlChart data={pnlHistoryData ?? []} />
+        </Card>
+      </div>
 
       {/* Model Accuracy Section */}
       <Card className="border-zinc-800 bg-zinc-900/50 p-6">
@@ -279,11 +295,7 @@ export default function AnalyticsPage() {
             Model Accuracy
           </h3>
         </div>
-        <div className="flex h-32 items-center justify-center rounded-lg border border-dashed border-zinc-700">
-          <p className="text-sm text-zinc-500">
-            Model accuracy tracking will appear after 30+ resolved markets.
-          </p>
-        </div>
+        <ModelAccuracy data={modelAccuracyData ?? []} />
       </Card>
     </div>
   );

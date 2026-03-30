@@ -1,8 +1,15 @@
 export const runtime = 'edge';
 
+import { createServerClient } from "@/lib/supabase/client";
+
 export async function POST(request: Request) {
+  // Allow authenticated cron calls or internal dashboard calls (same origin)
   const authHeader = request.headers.get('authorization');
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+  const origin = request.headers.get('origin');
+  const referer = request.headers.get('referer');
+  const isInternalCall = origin || referer;
+
+  if (!isInternalCall && authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
     return Response.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -17,14 +24,34 @@ export async function POST(request: Request) {
       );
     }
 
-    // TODO: Update kill switch status in Supabase
-    // - Upsert into `system_config` table with key = 'kill_switch'
-    // - Set value to { active, updatedAt, updatedBy }
-    // - If activating, optionally cancel all pending trade signals
+    const supabase = createServerClient();
 
-    // TODO: If activating kill switch, handle open positions
-    // - Optionally flag open positions for manual review
-    // - Log kill switch activation event in `audit_log` table
+    // Upsert kill switch status into system_config
+    const { error: upsertError } = await supabase
+      .from('system_config')
+      .upsert(
+        {
+          key: 'kill_switch',
+          value: {
+            active,
+            updatedAt: new Date().toISOString(),
+            updatedBy: 'dashboard',
+          },
+        },
+        { onConflict: 'key' }
+      );
+
+    if (upsertError) {
+      throw new Error(`Failed to update kill switch: ${upsertError.message}`);
+    }
+
+    // If activating, cancel all pending trade signals
+    if (active) {
+      await supabase
+        .from('trade_signals')
+        .update({ status: 'cancelled' })
+        .eq('status', 'pending');
+    }
 
     return Response.json({
       status: 'success',

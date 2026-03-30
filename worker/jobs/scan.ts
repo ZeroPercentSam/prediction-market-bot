@@ -2,7 +2,7 @@
  * Scan Job — Fetches markets from Polymarket + Kalshi in parallel
  */
 
-import { supabase, startPipelineRun, completePipelineRun } from "../lib/config.js";
+import { supabase, getConfig, startPipelineRun, completePipelineRun } from "../lib/config.js";
 import { findArbOpportunities } from "../lib/arbitrage.js";
 
 const GAMMA_BASE_URL = "https://gamma-api.polymarket.com";
@@ -13,6 +13,24 @@ export async function runScanJob(): Promise<void> {
   const start = Date.now();
 
   try {
+    // Load configurable thresholds
+    const [
+      minVolume,
+      maxExpiryDays,
+      priceSpikeThreshold,
+      spreadWideThreshold,
+    ] = await Promise.all([
+      getConfig("scan_min_volume").catch(() => 200),
+      getConfig("scan_max_expiry_days").catch(() => 30),
+      getConfig("anomaly_price_spike_pct").catch(() => 10),
+      getConfig("anomaly_spread_wide_cents").catch(() => 5),
+    ]);
+
+    const cfgMinVolume = Number(minVolume);
+    const cfgMaxExpiryDays = Number(maxExpiryDays);
+    const cfgPriceSpikeThreshold = Number(priceSpikeThreshold);
+    const cfgSpreadWideThreshold = Number(spreadWideThreshold);
+
     // Fetch from both platforms in parallel
     const [polymarkets, kalshiMarkets] = await Promise.all([
       fetchPolymarkets().catch((e) => {
@@ -25,13 +43,56 @@ export async function runScanJob(): Promise<void> {
       }),
     ]);
 
+    // Compute Kalshi price changes from previous snapshots
+    const kalshiIds = kalshiMarkets.map((m) => m.platformMarketId);
+    if (kalshiIds.length > 0) {
+      // Look up market UUIDs for Kalshi markets
+      const { data: kalshiDbMarkets } = await supabase
+        .from("markets")
+        .select("id, platform_market_id")
+        .eq("platform", "kalshi")
+        .in("platform_market_id", kalshiIds);
+
+      if (kalshiDbMarkets && kalshiDbMarkets.length > 0) {
+        const uuidToPlat = new Map(kalshiDbMarkets.map((r) => [r.id, r.platform_market_id]));
+        const platToUuid = new Map(kalshiDbMarkets.map((r) => [r.platform_market_id, r.id]));
+        const uuids = kalshiDbMarkets.map((r) => r.id);
+
+        // Fetch the most recent snapshot for each Kalshi market
+        const { data: prevSnapshots } = await supabase
+          .from("market_snapshots")
+          .select("market_id, yes_price, timestamp")
+          .in("market_id", uuids)
+          .order("timestamp", { ascending: false });
+
+        if (prevSnapshots && prevSnapshots.length > 0) {
+          // Build a map of most recent snapshot per platform_market_id
+          const latestSnapshot = new Map<string, number>();
+          for (const snap of prevSnapshots) {
+            const platId = uuidToPlat.get(snap.market_id);
+            if (platId && !latestSnapshot.has(platId)) {
+              latestSnapshot.set(platId, Number(snap.yes_price));
+            }
+          }
+
+          for (const m of kalshiMarkets) {
+            const prevPrice = latestSnapshot.get(m.platformMarketId);
+            if (prevPrice !== undefined) {
+              m.priceChange1h = m.yesPrice - prevPrice;
+              m.priceChange24h = m.yesPrice - prevPrice; // best approximation with available data
+            }
+          }
+        }
+      }
+    }
+
     const allMarkets = [...polymarkets, ...kalshiMarkets];
 
-    // Filter: min volume 200, max 30 day expiry
+    // Filter: configurable min volume and max expiry
     const now = new Date();
-    const maxExpiry = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+    const maxExpiry = new Date(now.getTime() + cfgMaxExpiryDays * 24 * 60 * 60 * 1000);
     const filtered = allMarkets.filter((m) => {
-      if (m.volume24h < 200) return false;
+      if (m.volume24h < cfgMinVolume) return false;
       if (m.expiryDate) {
         const exp = new Date(m.expiryDate);
         if (exp > maxExpiry || exp < now) return false;
@@ -39,9 +100,18 @@ export async function runScanJob(): Promise<void> {
       return true;
     });
 
+    // Deduplicate by platform + market ID (APIs can return duplicates)
+    const seen = new Set<string>();
+    const deduped = filtered.filter((m) => {
+      const key = `${m.platform}:${m.platformMarketId}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
     // Upsert markets
-    if (filtered.length > 0) {
-      const rows = filtered.map((m) => ({
+    if (deduped.length > 0) {
+      const rows = deduped.map((m) => ({
         platform: m.platform,
         platform_market_id: m.platformMarketId,
         question: m.question,
@@ -61,9 +131,43 @@ export async function runScanJob(): Promise<void> {
         last_scanned: new Date().toISOString(),
       }));
 
-      await supabase
+      const { error: upsertError } = await supabase
         .from("markets")
         .upsert(rows, { onConflict: "platform,platform_market_id" });
+      if (upsertError) {
+        console.error(`[scan] Failed to upsert markets:`, upsertError.message);
+      }
+    }
+
+    // Write market snapshots for price change tracking
+    if (deduped.length > 0) {
+      // Look up market UUIDs for snapshot foreign keys
+      const platformIds = deduped.map((m) => m.platformMarketId);
+      const { data: marketRows } = await supabase
+        .from("markets")
+        .select("id, platform_market_id")
+        .in("platform_market_id", platformIds);
+
+      if (marketRows && marketRows.length > 0) {
+        const idMap = new Map(marketRows.map((r) => [r.platform_market_id, r.id]));
+        const snapshotRows = filtered
+          .filter((m) => idMap.has(m.platformMarketId))
+            .map((m) => ({
+            market_id: idMap.get(m.platformMarketId),
+            yes_price: m.yesPrice,
+            no_price: m.noPrice,
+            volume: m.volume24h,
+            liquidity: m.liquidity,
+            timestamp: new Date().toISOString(),
+          }));
+
+        const { error: snapshotError } = await supabase
+          .from("market_snapshots")
+          .insert(snapshotRows);
+        if (snapshotError) {
+          console.error(`[scan] Failed to insert snapshots:`, snapshotError.message);
+        }
+      }
     }
 
     // Detect anomalies
@@ -85,30 +189,33 @@ export async function runScanJob(): Promise<void> {
 
       for (const m of upserted) {
         const absChange = Math.abs(Number(m.price_change_1h) * 100);
-        if (absChange > 10) {
+        if (absChange > cfgPriceSpikeThreshold) {
           anomalies.push({
             market_id: m.id,
             type: "price_spike",
-            severity: absChange > 20 ? "high" : "medium",
+            severity: absChange > cfgPriceSpikeThreshold * 2 ? "high" : "medium",
             description: `Price moved ${absChange.toFixed(1)}% in 1 hour`,
             value: absChange,
-            threshold: 10,
+            threshold: cfgPriceSpikeThreshold,
           });
         }
-        if (Number(m.spread_cents) > 5) {
+        if (Number(m.spread_cents) > cfgSpreadWideThreshold) {
           anomalies.push({
             market_id: m.id,
             type: "spread_wide",
-            severity: Number(m.spread_cents) > 10 ? "high" : "low",
+            severity: Number(m.spread_cents) > cfgSpreadWideThreshold * 2 ? "high" : "low",
             description: `Spread is ${Number(m.spread_cents).toFixed(1)} cents`,
             value: Number(m.spread_cents),
-            threshold: 5,
+            threshold: cfgSpreadWideThreshold,
           });
         }
       }
 
       if (anomalies.length > 0) {
-        await supabase.from("anomalies").insert(anomalies);
+        const { error: anomalyError } = await supabase.from("anomalies").insert(anomalies);
+        if (anomalyError) {
+          console.error(`[scan] Failed to insert anomalies:`, anomalyError.message);
+        }
         anomalyCount = anomalies.length;
       }
     }
@@ -201,6 +308,34 @@ async function fetchKalshi(): Promise<NormalizedMarket[]> {
   const all: NormalizedMarket[] = [];
   let cursor: string | undefined;
 
+  // Fetch events to build event_ticker -> category map
+  const eventCategoryMap = new Map<string, string>();
+  try {
+    let eventCursor: string | undefined;
+    for (let page = 0; page < 5; page++) {
+      const eventUrl = new URL(`${KALSHI_BASE_URL}/events`);
+      eventUrl.searchParams.set("status", "open");
+      eventUrl.searchParams.set("limit", "100");
+      if (eventCursor) eventUrl.searchParams.set("cursor", eventCursor);
+
+      const eventRes = await fetch(eventUrl.toString());
+      if (!eventRes.ok) break;
+      const eventData = await eventRes.json();
+      if (!eventData.events || eventData.events.length === 0) break;
+
+      for (const ev of eventData.events) {
+        if (ev.event_ticker && ev.category) {
+          eventCategoryMap.set(ev.event_ticker, ev.category);
+        }
+      }
+
+      eventCursor = eventData.cursor;
+      if (!eventCursor) break;
+    }
+  } catch (e) {
+    console.error("[scan] Failed to fetch Kalshi events for categories:", (e as Error).message);
+  }
+
   for (let page = 0; page < 5; page++) {
     const url = new URL(`${KALSHI_BASE_URL}/markets`);
     url.searchParams.set("status", "open");
@@ -216,20 +351,21 @@ async function fetchKalshi(): Promise<NormalizedMarket[]> {
       const yesBid = parseFloat(m.yes_bid_dollars || "0");
       const yesAsk = parseFloat(m.yes_ask_dollars || "0");
       const yesPrice = yesBid && yesAsk ? (yesBid + yesAsk) / 2 : parseFloat(m.last_price_dollars || "0");
+      const category = eventCategoryMap.get(m.event_ticker) || "unknown";
 
       all.push({
         platform: "kalshi",
         platformMarketId: m.ticker,
         question: m.title,
         description: m.rules_primary || "",
-        category: "",
+        category,
         yesPrice,
         noPrice: 1 - yesPrice,
         volume24h: parseFloat(m.volume_24h_fp || "0"),
         totalVolume: parseFloat(m.volume_fp || "0"),
         liquidity: parseFloat(m.liquidity_dollars || "0"),
         expiryDate: m.expiration_time || m.close_time || "",
-        spread: yesAsk - yesBid,
+        spread: Math.max(0, yesAsk - yesBid),
         priceChange1h: 0,
         priceChange24h: 0,
       });

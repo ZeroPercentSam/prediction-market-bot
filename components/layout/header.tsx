@@ -2,11 +2,15 @@
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Bell, DollarSign, Power } from "lucide-react";
-import { useDashboardStats } from "@/lib/hooks/use-dashboard-data";
+import { Bell, DollarSign, Power, Loader2 } from "lucide-react";
+import {
+  useDashboardStats,
+  useToggleKillSwitch,
+} from "@/lib/hooks/use-dashboard-data";
 
 export function Header() {
   const { data: stats } = useDashboardStats();
+  const killSwitch = useToggleKillSwitch();
 
   const bankroll = stats?.bankroll ?? 0;
   const dailyPnl = stats?.dailyPnl ?? 0;
@@ -61,9 +65,19 @@ export function Header() {
         >
           <Bell className="h-4 w-4" />
         </Button>
-        <Button variant="destructive" size="sm" className="gap-2">
-          <Power className="h-3 w-3" />
-          Kill Switch
+        <Button
+          variant="destructive"
+          size="sm"
+          className="gap-2"
+          onClick={() => killSwitch.mutate(!killSwitchActive)}
+          disabled={killSwitch.isPending}
+        >
+          {killSwitch.isPending ? (
+            <Loader2 className="h-3 w-3 animate-spin" />
+          ) : (
+            <Power className="h-3 w-3" />
+          )}
+          {killSwitchActive ? "Deactivate" : "Kill Switch"}
         </Button>
       </div>
     </header>

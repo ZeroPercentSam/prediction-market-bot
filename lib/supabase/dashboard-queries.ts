@@ -13,7 +13,7 @@ export async function fetchDashboardMarkets(limit: number = 50) {
     .order("volume_24h", { ascending: false })
     .limit(limit);
 
-  if (error) throw error;
+  if (error) throw new Error(`fetchDashboardMarkets failed: ${error.message}`);
   return data ?? [];
 }
 
@@ -24,7 +24,7 @@ export async function fetchMarketById(id: string) {
     .eq("id", id)
     .single();
 
-  if (error) throw error;
+  if (error) throw new Error(`fetchMarketById failed: ${error.message}`);
   return data;
 }
 
@@ -35,7 +35,7 @@ export async function fetchRecentAnomalies(limit: number = 20) {
     .order("detected_at", { ascending: false })
     .limit(limit);
 
-  if (error) throw error;
+  if (error) throw new Error(`fetchRecentAnomalies failed: ${error.message}`);
   return data ?? [];
 }
 
@@ -46,7 +46,7 @@ export async function fetchPipelineRuns(limit: number = 20) {
     .order("started_at", { ascending: false })
     .limit(limit);
 
-  if (error) throw error;
+  if (error) throw new Error(`fetchPipelineRuns failed: ${error.message}`);
   return data ?? [];
 }
 
@@ -106,7 +106,7 @@ export async function fetchTrades(status?: string, limit: number = 50) {
   }
 
   const { data, error } = await query;
-  if (error) throw error;
+  if (error) throw new Error(`fetchTrades failed: ${error.message}`);
   return data ?? [];
 }
 
@@ -117,7 +117,7 @@ export async function fetchPredictions(limit: number = 50) {
     .order("created_at", { ascending: false })
     .limit(limit);
 
-  if (error) throw error;
+  if (error) throw new Error(`fetchPredictions failed: ${error.message}`);
   return data ?? [];
 }
 
@@ -128,7 +128,7 @@ export async function fetchResearchSummaries(limit: number = 20) {
     .order("last_updated", { ascending: false })
     .limit(limit);
 
-  if (error) throw error;
+  if (error) throw new Error(`fetchResearchSummaries failed: ${error.message}`);
   return data ?? [];
 }
 
@@ -147,6 +147,6 @@ export async function fetchResearchItems(
   }
 
   const { data, error } = await query;
-  if (error) throw error;
+  if (error) throw new Error(`fetchResearchItems failed: ${error.message}`);
   return data ?? [];
 }

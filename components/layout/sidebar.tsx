@@ -8,6 +8,7 @@ import {
   Brain,
   History,
   Home,
+  Layers,
   LineChart,
   Search,
   Settings,
@@ -16,6 +17,7 @@ import {
   FileText,
   Newspaper,
 } from "lucide-react";
+import { useDashboardStats } from "@/lib/hooks/use-dashboard-data";
 
 const navigation = [
   { name: "Overview", href: "/", icon: Home },
@@ -25,6 +27,7 @@ const navigation = [
   { name: "Active Trades", href: "/trades", icon: TrendingUp },
   { name: "Trade History", href: "/history", icon: History },
   { name: "Analytics", href: "/analytics", icon: BarChart3 },
+  { name: "Strategies", href: "/strategies", icon: Layers },
   { name: "Risk Dashboard", href: "/risk", icon: Shield },
   { name: "Settings", href: "/settings", icon: Settings },
   { name: "Logs", href: "/logs", icon: FileText },
@@ -32,6 +35,12 @@ const navigation = [
 
 export function Sidebar() {
   const pathname = usePathname();
+  const { data: stats } = useDashboardStats();
+
+  const workerHeartbeat = stats?.workerHeartbeat ?? null;
+  const isPipelineActive =
+    workerHeartbeat != null &&
+    Date.now() - new Date(workerHeartbeat).getTime() < 2 * 60 * 1000;
 
   return (
     <aside className="flex h-full w-64 flex-col border-r border-zinc-800 bg-zinc-950">
@@ -63,8 +72,17 @@ export function Sidebar() {
       </nav>
       <div className="border-t border-zinc-800 p-4">
         <div className="flex items-center gap-2">
-          <div className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-          <span className="text-xs text-zinc-400">Pipeline Active</span>
+          <div
+            className={cn(
+              "h-2 w-2 rounded-full",
+              isPipelineActive
+                ? "bg-emerald-500 animate-pulse"
+                : "bg-red-500"
+            )}
+          />
+          <span className="text-xs text-zinc-400">
+            {isPipelineActive ? "Pipeline Active" : "Pipeline Inactive"}
+          </span>
         </div>
       </div>
     </aside>

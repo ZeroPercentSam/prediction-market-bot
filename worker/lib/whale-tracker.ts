@@ -93,18 +93,30 @@ export async function getWhaleSignal(
 
     // Store in database (non-fatal)
     try {
-      await supabase.from("whale_signals").upsert(
-        {
-          market_id: marketId,
-          whale_count: signal.whaleCount,
-          net_direction: signal.netDirection,
-          conviction_score: signal.convictionScore,
-          total_volume: totalBuy + totalSell,
-          detected_at: new Date().toISOString(),
-        },
-        { onConflict: "market_id" }
-      );
-    } catch { /* non-fatal */ }
+      // Derive signal_type from whale behavior
+      let signalType: "accumulation" | "distribution" | "consensus" | "divergence";
+      if (netDirection === "bullish") {
+        signalType = uniqueWallets.size >= 3 ? "consensus" : "accumulation";
+      } else if (netDirection === "bearish") {
+        signalType = uniqueWallets.size >= 3 ? "consensus" : "distribution";
+      } else {
+        signalType = "divergence";
+      }
+
+      const { error: signalError } = await supabase.from("whale_signals").insert({
+        market_id: marketId,
+        signal_type: signalType,
+        conviction_score: signal.convictionScore,
+        whale_count: signal.whaleCount,
+        net_direction: signal.netDirection,
+        adjustment: 0, // Caller sets real adjustment via applyWhaleAdjustment
+      });
+      if (signalError) {
+        console.warn(`[whale] Failed to insert signal for ${marketId}:`, signalError.message);
+      }
+    } catch (err) {
+      console.warn(`[whale] DB error for ${marketId}:`, err instanceof Error ? err.message : err);
+    }
 
     return signal;
   } catch (error) {

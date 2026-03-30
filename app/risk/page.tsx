@@ -1,3 +1,5 @@
+"use client";
+
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -7,33 +9,49 @@ import {
   Activity,
   DollarSign,
   TrendingDown,
+  TrendingUp,
   Zap,
+  Loader2,
 } from "lucide-react";
-
-// Mock data — will be replaced with Supabase queries
-const mockRisk = {
-  bankroll: 10000,
-  dailyPnl: -347.5,
-  dailyPnlPct: -3.48,
-  openPositions: 3,
-  maxConcurrentPositions: 15,
-  totalExposure: 1200,
-  exposureByCategory: {
-    Crypto: 500,
-    Economics: 300,
-    Finance: 400,
-  } as Record<string, number>,
-  varValue: 820,
-  dailyLossLimitPct: 0.15,
-  dailyLossUsed: 0.0348,
-  killSwitchActive: false,
-  maxPositionSizePct: 0.05,
-};
+import { useRiskData, useToggleKillSwitch } from "@/lib/hooks/use-dashboard-data";
 
 export default function RiskPage() {
+  const { data: risk, isLoading, error } = useRiskData();
+  const killSwitch = useToggleKillSwitch();
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Loader2 className="h-8 w-8 animate-spin text-zinc-400" />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <p className="text-red-500">Failed to load risk data: {error.message}</p>
+      </div>
+    );
+  }
+
+  if (!risk) return null;
+
+  const dailyLossUsed = risk.bankroll
+    ? Math.abs(risk.dailyPnl) / risk.bankroll
+    : 0;
   const lossLimitProgress =
-    (mockRisk.dailyLossUsed / mockRisk.dailyLossLimitPct) * 100;
-  const exposurePct = (mockRisk.totalExposure / mockRisk.bankroll) * 100;
+    risk.dailyLossLimitPct > 0
+      ? (dailyLossUsed / risk.dailyLossLimitPct) * 100
+      : 0;
+  const exposurePct =
+    risk.bankroll > 0 ? (risk.totalExposure / risk.bankroll) * 100 : 0;
+  const pnlIsNegative = risk.dailyPnl < 0;
+  const PnlIcon = pnlIsNegative ? TrendingDown : TrendingUp;
+
+  function handleKillSwitch() {
+    killSwitch.mutate(!risk!.killSwitchActive);
+  }
 
   return (
     <div className="space-y-6">
@@ -44,7 +62,7 @@ export default function RiskPage() {
             Portfolio risk monitoring and kill switch controls
           </p>
         </div>
-        {mockRisk.killSwitchActive && (
+        {risk.killSwitchActive && (
           <Badge className="bg-red-500/10 text-red-500 border-red-500/20 gap-1">
             <ShieldAlert className="h-3 w-3" />
             KILL SWITCH ACTIVE
@@ -60,7 +78,7 @@ export default function RiskPage() {
             <DollarSign className="h-4 w-4 text-zinc-500" />
           </div>
           <p className="text-2xl font-bold text-white">
-            ${mockRisk.totalExposure.toLocaleString()}
+            ${risk.totalExposure.toLocaleString()}
           </p>
           <p className="text-xs text-zinc-500 mt-1">
             {exposurePct.toFixed(1)}% of bankroll
@@ -73,10 +91,10 @@ export default function RiskPage() {
             <Activity className="h-4 w-4 text-zinc-500" />
           </div>
           <p className="text-2xl font-bold text-white">
-            {mockRisk.openPositions}
+            {risk.openPositions}
           </p>
           <p className="text-xs text-zinc-500 mt-1">
-            Max: {mockRisk.maxConcurrentPositions}
+            Max: {risk.maxConcurrentPositions}
           </p>
         </Card>
 
@@ -86,7 +104,7 @@ export default function RiskPage() {
             <AlertTriangle className="h-4 w-4 text-zinc-500" />
           </div>
           <p className="text-2xl font-bold text-amber-500">
-            ${mockRisk.varValue.toLocaleString()}
+            ${risk.varValue.toLocaleString()}
           </p>
           <p className="text-xs text-zinc-500 mt-1">95% confidence, 1-day</p>
         </Card>
@@ -94,13 +112,19 @@ export default function RiskPage() {
         <Card className="border-zinc-800 bg-zinc-900/50 p-5">
           <div className="flex items-center justify-between mb-2">
             <p className="text-sm text-zinc-400">Daily P&L</p>
-            <TrendingDown className="h-4 w-4 text-red-500" />
+            <PnlIcon
+              className={`h-4 w-4 ${pnlIsNegative ? "text-red-500" : "text-emerald-500"}`}
+            />
           </div>
-          <p className="text-2xl font-bold text-red-500">
-            ${mockRisk.dailyPnl.toFixed(2)}
+          <p
+            className={`text-2xl font-bold ${pnlIsNegative ? "text-red-500" : "text-emerald-500"}`}
+          >
+            ${risk.dailyPnl.toFixed(2)}
           </p>
-          <p className="text-xs text-red-400 mt-1">
-            {mockRisk.dailyPnlPct.toFixed(2)}% of bankroll
+          <p
+            className={`text-xs mt-1 ${pnlIsNegative ? "text-red-400" : "text-emerald-400"}`}
+          >
+            {risk.dailyPnlPct.toFixed(2)}% of bankroll
           </p>
         </Card>
       </div>
@@ -112,8 +136,8 @@ export default function RiskPage() {
             Daily Loss Limit
           </h3>
           <span className="text-sm font-mono text-zinc-300">
-            {(mockRisk.dailyLossUsed * 100).toFixed(2)}% /{" "}
-            {(mockRisk.dailyLossLimitPct * 100).toFixed(0)}%
+            {(dailyLossUsed * 100).toFixed(2)}% /{" "}
+            {(risk.dailyLossLimitPct * 100).toFixed(0)}%
           </span>
         </div>
         <div className="h-3 rounded-full bg-zinc-800 overflow-hidden">
@@ -132,38 +156,48 @@ export default function RiskPage() {
           <span className="text-xs text-zinc-500">0%</span>
           <span className="text-xs text-zinc-500">
             Kill switch at{" "}
-            {(mockRisk.dailyLossLimitPct * 100).toFixed(0)}%
+            {(risk.dailyLossLimitPct * 100).toFixed(0)}%
           </span>
         </div>
       </Card>
 
-      {/* Exposure by Category & Position Limits */}
+      {/* Exposure by Platform & Position Limits */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <Card className="border-zinc-800 bg-zinc-900/50 p-5">
           <h3 className="text-sm font-medium text-zinc-400 mb-4">
-            Exposure by Category
+            Exposure by Platform
           </h3>
           <div className="space-y-3">
-            {Object.entries(mockRisk.exposureByCategory).map(
-              ([category, amount]) => {
-                const pct = (amount / mockRisk.totalExposure) * 100;
-                return (
-                  <div key={category}>
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-sm text-zinc-300">{category}</span>
-                      <span className="text-sm font-mono text-zinc-400">
-                        ${amount.toLocaleString()} ({pct.toFixed(0)}%)
-                      </span>
+            {Object.keys(risk.exposureByPlatform).length === 0 ? (
+              <p className="text-sm text-zinc-500">No active positions</p>
+            ) : (
+              Object.entries(risk.exposureByPlatform).map(
+                ([platform, count]) => {
+                  const total = Object.values(risk.exposureByPlatform).reduce(
+                    (a, b) => a + b,
+                    0
+                  );
+                  const pct = total > 0 ? (count / total) * 100 : 0;
+                  return (
+                    <div key={platform}>
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-sm text-zinc-300 capitalize">
+                          {platform}
+                        </span>
+                        <span className="text-sm font-mono text-zinc-400">
+                          {count} trades ({pct.toFixed(0)}%)
+                        </span>
+                      </div>
+                      <div className="h-2 rounded-full bg-zinc-800 overflow-hidden">
+                        <div
+                          className="h-full rounded-full bg-blue-500"
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
                     </div>
-                    <div className="h-2 rounded-full bg-zinc-800 overflow-hidden">
-                      <div
-                        className="h-full rounded-full bg-blue-500"
-                        style={{ width: `${pct}%` }}
-                      />
-                    </div>
-                  </div>
-                );
-              }
+                  );
+                }
+              )
             )}
           </div>
         </Card>
@@ -178,7 +212,7 @@ export default function RiskPage() {
                 Max Position Size
               </span>
               <span className="text-sm font-mono text-white">
-                {(mockRisk.maxPositionSizePct * 100).toFixed(0)}% of bankroll
+                {(risk.maxPositionSizePct * 100).toFixed(0)}% of bankroll
               </span>
             </div>
             <div className="flex items-center justify-between rounded-lg border border-zinc-800 bg-zinc-900 p-3">
@@ -186,7 +220,7 @@ export default function RiskPage() {
                 Max Concurrent Positions
               </span>
               <span className="text-sm font-mono text-white">
-                {mockRisk.maxConcurrentPositions}
+                {risk.maxConcurrentPositions}
               </span>
             </div>
             <div className="flex items-center justify-between rounded-lg border border-zinc-800 bg-zinc-900 p-3">
@@ -194,7 +228,7 @@ export default function RiskPage() {
                 Daily Loss Limit
               </span>
               <span className="text-sm font-mono text-white">
-                {(mockRisk.dailyLossLimitPct * 100).toFixed(0)}% of bankroll
+                {(risk.dailyLossLimitPct * 100).toFixed(0)}% of bankroll
               </span>
             </div>
             <div className="flex items-center justify-between rounded-lg border border-zinc-800 bg-zinc-900 p-3">
@@ -202,7 +236,10 @@ export default function RiskPage() {
                 Max Single Position
               </span>
               <span className="text-sm font-mono text-white">
-                ${(mockRisk.bankroll * mockRisk.maxPositionSizePct).toLocaleString()}
+                $
+                {(
+                  risk.bankroll * risk.maxPositionSizePct
+                ).toLocaleString()}
               </span>
             </div>
           </div>
@@ -227,9 +264,15 @@ export default function RiskPage() {
             variant="destructive"
             size="lg"
             className="bg-red-600 hover:bg-red-700 text-white font-bold px-8"
+            onClick={handleKillSwitch}
+            disabled={killSwitch.isPending}
           >
-            <ShieldAlert className="h-4 w-4 mr-2" />
-            {mockRisk.killSwitchActive
+            {killSwitch.isPending ? (
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+            ) : (
+              <ShieldAlert className="h-4 w-4 mr-2" />
+            )}
+            {risk.killSwitchActive
               ? "DEACTIVATE KILL SWITCH"
               : "ACTIVATE KILL SWITCH"}
           </Button>
