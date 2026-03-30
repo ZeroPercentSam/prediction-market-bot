@@ -1,3 +1,5 @@
+"use client";
+
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -6,103 +8,33 @@ import {
   Loader2,
   Clock,
   AlertTriangle,
+  Search,
+  Zap,
+  Brain,
+  Target,
+  ArrowRightLeft,
+  Inbox,
 } from "lucide-react";
-import type { PipelineStage } from "@/types";
+import { usePipelineRuns } from "@/lib/hooks/use-dashboard-data";
 
-// Mock data — will be replaced with Supabase queries
-const mockPipelineRuns: {
-  id: string;
-  stage: PipelineStage;
-  status: "running" | "success" | "error";
-  marketsProcessed: number;
-  duration: number;
-  error: string | null;
-  startedAt: string;
-  completedAt: string | null;
-}[] = [
-  {
-    id: "r1",
-    stage: "scan",
-    status: "success",
-    marketsProcessed: 312,
-    duration: 4200,
-    error: null,
-    startedAt: "2026-03-27T09:00:00Z",
-    completedAt: "2026-03-27T09:00:04Z",
-  },
-  {
-    id: "r2",
-    stage: "research",
-    status: "success",
-    marketsProcessed: 47,
-    duration: 18500,
-    error: null,
-    startedAt: "2026-03-27T09:00:05Z",
-    completedAt: "2026-03-27T09:00:23Z",
-  },
-  {
-    id: "r3",
-    stage: "predict",
-    status: "success",
-    marketsProcessed: 12,
-    duration: 32100,
-    error: null,
-    startedAt: "2026-03-27T09:00:24Z",
-    completedAt: "2026-03-27T09:00:56Z",
-  },
-  {
-    id: "r4",
-    stage: "execute",
-    status: "error",
-    marketsProcessed: 2,
-    duration: 1200,
-    error: "Polymarket API rate limit exceeded. Retry in 60s.",
-    startedAt: "2026-03-27T09:00:57Z",
-    completedAt: "2026-03-27T09:00:58Z",
-  },
-  {
-    id: "r5",
-    stage: "compound",
-    status: "success",
-    marketsProcessed: 3,
-    duration: 850,
-    error: null,
-    startedAt: "2026-03-27T08:55:00Z",
-    completedAt: "2026-03-27T08:55:01Z",
-  },
-  {
-    id: "r6",
-    stage: "scan",
-    status: "running",
-    marketsProcessed: 156,
-    duration: 2100,
-    error: null,
-    startedAt: "2026-03-27T09:05:00Z",
-    completedAt: null,
-  },
-];
+function formatRelativeTime(dateStr: string): string {
+  const now = Date.now();
+  const then = new Date(dateStr).getTime();
+  const diffMs = now - then;
+  const diffMin = Math.floor(diffMs / 60_000);
+  if (diffMin < 1) return "just now";
+  if (diffMin < 60) return `${diffMin} min ago`;
+  const diffHours = Math.floor(diffMin / 60);
+  if (diffHours < 24) return `${diffHours} hour${diffHours === 1 ? "" : "s"} ago`;
+  const diffDays = Math.floor(diffHours / 24);
+  return `${diffDays} day${diffDays === 1 ? "" : "s"} ago`;
+}
 
-const mockErrors = [
-  {
-    id: "e1",
-    stage: "execute" as PipelineStage,
-    message: "Polymarket API rate limit exceeded. Retry in 60s.",
-    timestamp: "2026-03-27T09:00:58Z",
-  },
-  {
-    id: "e2",
-    stage: "research" as PipelineStage,
-    message: "Twitter API returned 429: Too Many Requests for market m42.",
-    timestamp: "2026-03-27T08:45:12Z",
-  },
-  {
-    id: "e3",
-    stage: "predict" as PipelineStage,
-    message:
-      "DeepSeek model timeout after 30s for market m18. Falling back to 4-model ensemble.",
-    timestamp: "2026-03-27T08:30:05Z",
-  },
-];
+function formatDuration(ms: number | null | undefined): string {
+  if (ms == null || ms === 0) return "--";
+  if (ms < 1000) return `${ms}ms`;
+  return `${(ms / 1000).toFixed(1)}s`;
+}
 
 const statusConfig = {
   success: {
@@ -126,22 +58,68 @@ const statusConfig = {
     border: "border-blue-500/20",
     label: "Running",
   },
+} as const;
+
+const stageConfig: Record<string, { label: string; icon: React.ComponentType<{ className?: string }> }> = {
+  scan: { label: "Market Scan", icon: Search },
+  research: { label: "Research", icon: Brain },
+  predict: { label: "Prediction", icon: Target },
+  execute: { label: "Execution", icon: ArrowRightLeft },
+  compound: { label: "Compounding", icon: Zap },
 };
 
-const stageLabels: Record<PipelineStage, string> = {
-  scan: "Market Scan",
-  research: "Research",
-  predict: "Prediction",
-  execute: "Execution",
-  compound: "Compounding",
-};
-
-function formatDuration(ms: number): string {
-  if (ms < 1000) return `${ms}ms`;
-  return `${(ms / 1000).toFixed(1)}s`;
+function LoadingSkeleton() {
+  return (
+    <div className="space-y-6">
+      <div className="space-y-2">
+        <div className="h-7 w-44 rounded bg-zinc-800 animate-pulse" />
+        <div className="h-4 w-64 rounded bg-zinc-800/60 animate-pulse" />
+      </div>
+      <Card className="border-zinc-800 bg-zinc-900/50 overflow-hidden">
+        <div className="p-5 border-b border-zinc-800">
+          <div className="h-4 w-40 rounded bg-zinc-800 animate-pulse" />
+        </div>
+        <div className="p-4 space-y-4">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div key={i} className="flex gap-4">
+              <div className="h-4 w-24 rounded bg-zinc-800 animate-pulse" />
+              <div className="h-4 w-20 rounded bg-zinc-800 animate-pulse" />
+              <div className="h-4 w-12 rounded bg-zinc-800 animate-pulse" />
+              <div className="h-4 w-16 rounded bg-zinc-800 animate-pulse" />
+              <div className="h-4 w-24 rounded bg-zinc-800 animate-pulse" />
+            </div>
+          ))}
+        </div>
+      </Card>
+      <Card className="border-zinc-800 bg-zinc-900/50 p-6">
+        <div className="space-y-3">
+          <div className="h-4 w-32 rounded bg-zinc-800 animate-pulse" />
+          <div className="h-16 rounded bg-zinc-800/40 animate-pulse" />
+        </div>
+      </Card>
+    </div>
+  );
 }
 
 export default function LogsPage() {
+  const { data: pipelineRuns, isLoading, error } = usePipelineRuns(50);
+
+  if (isLoading) return <LoadingSkeleton />;
+
+  if (error) {
+    return (
+      <div className="space-y-6">
+        <h1 className="text-2xl font-bold text-white">Pipeline Logs</h1>
+        <Card className="border-zinc-800 bg-zinc-900/50 p-8 text-center">
+          <p className="text-red-400 text-sm">Failed to load logs: {(error as Error).message}</p>
+        </Card>
+      </div>
+    );
+  }
+
+  const runs = pipelineRuns ?? [];
+  const errorRuns = runs.filter((r) => r.status === "error" && r.error);
+
   return (
     <div className="space-y-6">
       <div>
@@ -151,7 +129,7 @@ export default function LogsPage() {
         </p>
       </div>
 
-      {/* Pipeline Runs */}
+      {/* Pipeline Runs Table */}
       <Card className="border-zinc-800 bg-zinc-900/50 overflow-hidden">
         <div className="p-5 border-b border-zinc-800">
           <div className="flex items-center gap-2">
@@ -159,70 +137,88 @@ export default function LogsPage() {
             <h3 className="text-sm font-medium text-zinc-400">
               Recent Pipeline Runs
             </h3>
+            <Badge variant="secondary" className="text-xs ml-auto">
+              {runs.length} runs
+            </Badge>
           </div>
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-zinc-800 text-left">
-                <th className="px-4 py-3 font-medium text-zinc-400">Stage</th>
-                <th className="px-4 py-3 font-medium text-zinc-400">Status</th>
-                <th className="px-4 py-3 font-medium text-zinc-400 text-right">
-                  Markets Processed
-                </th>
-                <th className="px-4 py-3 font-medium text-zinc-400 text-right">
-                  Duration
-                </th>
-                <th className="px-4 py-3 font-medium text-zinc-400">
-                  Timestamp
-                </th>
-                <th className="px-4 py-3 font-medium text-zinc-400">Error</th>
-              </tr>
-            </thead>
-            <tbody>
-              {mockPipelineRuns.map((run) => {
-                const config = statusConfig[run.status];
-                const StatusIcon = config.icon;
-                return (
-                  <tr
-                    key={run.id}
-                    className="border-b border-zinc-800/50 hover:bg-zinc-800/30 transition-colors"
-                  >
-                    <td className="px-4 py-3">
-                      <Badge variant="outline" className="text-xs">
-                        {stageLabels[run.stage]}
-                      </Badge>
-                    </td>
-                    <td className="px-4 py-3">
-                      <Badge
-                        className={`gap-1 text-xs ${config.bg} ${config.color} ${config.border}`}
-                      >
-                        <StatusIcon
-                          className={`h-3 w-3 ${
-                            run.status === "running" ? "animate-spin" : ""
-                          }`}
-                        />
-                        {config.label}
-                      </Badge>
-                    </td>
-                    <td className="px-4 py-3 text-right font-mono text-zinc-300">
-                      {run.marketsProcessed}
-                    </td>
-                    <td className="px-4 py-3 text-right font-mono text-zinc-300">
-                      {formatDuration(run.duration)}
-                    </td>
-                    <td className="px-4 py-3 text-xs text-zinc-500">
-                      {new Date(run.startedAt).toLocaleTimeString()}
-                    </td>
-                    <td className="px-4 py-3 text-xs text-red-400 max-w-xs truncate">
-                      {run.error || "--"}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+
+        {runs.length === 0 ? (
+          <div className="p-12 flex flex-col items-center justify-center text-center">
+            <Inbox className="h-10 w-10 text-zinc-600 mb-3" />
+            <p className="text-sm font-medium text-zinc-400">No pipeline runs yet</p>
+            <p className="text-xs text-zinc-500 mt-1">
+              Pipeline execution history will appear here.
+            </p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-zinc-800 text-left">
+                  <th className="px-4 py-3 font-medium text-zinc-400">Stage</th>
+                  <th className="px-4 py-3 font-medium text-zinc-400">Status</th>
+                  <th className="px-4 py-3 font-medium text-zinc-400 text-right">
+                    Markets Processed
+                  </th>
+                  <th className="px-4 py-3 font-medium text-zinc-400 text-right">
+                    Duration
+                  </th>
+                  <th className="px-4 py-3 font-medium text-zinc-400">
+                    Timestamp
+                  </th>
+                  <th className="px-4 py-3 font-medium text-zinc-400">Error</th>
+                </tr>
+              </thead>
+              <tbody>
+                {runs.map((run) => {
+                  const status = statusConfig[run.status as keyof typeof statusConfig] ?? statusConfig.error;
+                  const StatusIcon = status.icon;
+                  const stage = stageConfig[run.stage] ?? { label: run.stage, icon: Zap };
+                  const StageIcon = stage.icon;
+
+                  return (
+                    <tr
+                      key={run.id}
+                      className="border-b border-zinc-800/50 hover:bg-zinc-800/30 transition-colors"
+                    >
+                      <td className="px-4 py-3">
+                        <Badge variant="outline" className="text-xs gap-1">
+                          <StageIcon className="h-3 w-3" />
+                          {stage.label}
+                        </Badge>
+                      </td>
+                      <td className="px-4 py-3">
+                        <Badge
+                          className={`gap-1 text-xs ${status.bg} ${status.color} ${status.border}`}
+                        >
+                          <StatusIcon
+                            className={`h-3 w-3 ${
+                              run.status === "running" ? "animate-spin" : ""
+                            }`}
+                          />
+                          {status.label}
+                        </Badge>
+                      </td>
+                      <td className="px-4 py-3 text-right font-mono text-zinc-300">
+                        {run.markets_processed ?? 0}
+                      </td>
+                      <td className="px-4 py-3 text-right font-mono text-zinc-300">
+                        {formatDuration(run.duration_ms)}
+                      </td>
+                      <td className="px-4 py-3 text-xs text-zinc-500">
+                        {run.started_at ? formatRelativeTime(run.started_at) : "--"}
+                      </td>
+                      <td className="px-4 py-3 text-xs text-red-400 max-w-xs truncate">
+                        {run.error || "--"}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </Card>
 
       {/* Error Log */}
@@ -231,30 +227,39 @@ export default function LogsPage() {
           <AlertTriangle className="h-4 w-4 text-red-500" />
           <h3 className="text-sm font-medium text-zinc-400">Recent Errors</h3>
           <Badge variant="secondary" className="text-xs ml-auto">
-            {mockErrors.length} errors
+            {errorRuns.length} error{errorRuns.length !== 1 ? "s" : ""}
           </Badge>
         </div>
-        <div className="space-y-3">
-          {mockErrors.map((error) => (
-            <div
-              key={error.id}
-              className="rounded-lg border border-red-500/20 bg-red-500/5 p-3"
-            >
-              <div className="flex items-center gap-2 mb-1">
-                <Badge
-                  variant="outline"
-                  className="text-xs text-red-400 border-red-500/30"
+        {errorRuns.length === 0 ? (
+          <div className="flex h-20 items-center justify-center rounded-lg border border-dashed border-zinc-700">
+            <p className="text-sm text-zinc-500">No errors to display.</p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {errorRuns.map((run) => {
+              const stage = stageConfig[run.stage] ?? { label: run.stage, icon: Zap };
+              return (
+                <div
+                  key={run.id}
+                  className="rounded-lg border border-red-500/20 bg-red-500/5 p-3"
                 >
-                  {stageLabels[error.stage]}
-                </Badge>
-                <span className="text-xs text-zinc-500">
-                  {new Date(error.timestamp).toLocaleString()}
-                </span>
-              </div>
-              <p className="text-sm text-zinc-300 font-mono">{error.message}</p>
-            </div>
-          ))}
-        </div>
+                  <div className="flex items-center gap-2 mb-1">
+                    <Badge
+                      variant="outline"
+                      className="text-xs text-red-400 border-red-500/30"
+                    >
+                      {stage.label}
+                    </Badge>
+                    <span className="text-xs text-zinc-500">
+                      {run.started_at ? formatRelativeTime(run.started_at) : "unknown"}
+                    </span>
+                  </div>
+                  <p className="text-sm text-zinc-300 font-mono">{run.error}</p>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </Card>
     </div>
   );
