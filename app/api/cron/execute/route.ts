@@ -1,68 +1,90 @@
-export const runtime = 'edge';
+import { runExecution } from "@/lib/pipeline/executor";
+import {
+  startPipelineRun,
+  completePipelineRun,
+  isKillSwitchActive,
+  getConfig,
+} from "@/lib/supabase/queries";
+
+export const runtime = "edge";
 
 export async function GET(request: Request) {
-  const authHeader = request.headers.get('authorization');
+  const authHeader = request.headers.get("authorization");
   if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-    return Response.json({ error: 'Unauthorized' }, { status: 401 });
+    return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  if (await isKillSwitchActive()) {
+    return Response.json({
+      status: "skipped",
+      pipeline: "execute",
+      reason: "Kill switch active",
+    });
+  }
+
+  const runId = await startPipelineRun("execute");
+  const startTime = Date.now();
+
   try {
-    const startTime = Date.now();
+    // Load execution config
+    const [
+      kellyFraction,
+      maxPositionSizePct,
+      maxConcurrentPositions,
+      dailyLossLimitPct,
+      slippageAbortPct,
+      paperTradingMode,
+      bankroll,
+    ] = await Promise.all([
+      getConfig("kelly_fraction").catch(() => 0.25),
+      getConfig("max_position_size_pct").catch(() => 0.05),
+      getConfig("max_concurrent_positions").catch(() => 15),
+      getConfig("daily_loss_limit_pct").catch(() => 0.15),
+      getConfig("slippage_abort_pct").catch(() => 0.02),
+      getConfig("paper_trading_mode").catch(() => true),
+      getConfig("bankroll").catch(() => 10000),
+    ]);
 
-    // TODO: Check kill switch status before proceeding
-    // - Query `system_config` table for kill switch state
-    // - If kill switch is active, return early with no trades executed
-
-    // TODO: Check for actionable trade signals
-    // - Query `trade_signals` table for unexecuted signals
-    // - Filter by minimum signal strength and recency
-    // - Verify market is still active and price hasn't moved significantly
-
-    // TODO: Calculate Kelly Criterion position sizing
-    // - For each signal, compute optimal Kelly fraction
-    // - f* = (p * b - q) / b where p = ensemble prob, b = odds, q = 1 - p
-    // - Apply fractional Kelly (e.g., half-Kelly) for conservative sizing
-    // - Convert fraction to dollar amount based on bankroll
-
-    // TODO: Enforce risk limits
-    // - Maximum single trade size (e.g., 5% of bankroll)
-    // - Maximum total exposure per market category
-    // - Maximum daily loss limit
-    // - Maximum number of concurrent open positions
-    // - Correlation check across existing positions
-
-    // TODO: Execute trades via platform APIs
-    // - Polymarket: place orders via CLOB API (limit or market orders)
-    // - Kalshi: place orders via Kalshi trading API
-    // - Handle partial fills and order book depth
-    // - Implement retry logic with exponential backoff
-
-    // TODO: Store trade records in Supabase
-    // - Insert executed trades into `trades` table
-    // - Update `trade_signals` with execution status
-    // - Update portfolio positions in `positions` table
-    // - Log risk metrics snapshot in `risk_log` table
+    const result = await runExecution({
+      kellyFraction: Number(kellyFraction),
+      maxPositionSizePct: Number(maxPositionSizePct),
+      maxConcurrentPositions: Number(maxConcurrentPositions),
+      dailyLossLimitPct: Number(dailyLossLimitPct),
+      slippageAbortPct: Number(slippageAbortPct),
+      paperTradingMode: paperTradingMode === true || paperTradingMode === "true",
+      bankroll: Number(bankroll),
+    });
 
     const duration = Date.now() - startTime;
 
+    await completePipelineRun(runId, {
+      status: "success",
+      marketsProcessed: result.signalsProcessed,
+      durationMs: duration,
+    });
+
     return Response.json({
-      status: 'success',
-      pipeline: 'execute',
-      signalsEvaluated: 0,
-      tradesExecuted: 0,
-      totalDeployed: 0,
+      status: "success",
+      pipeline: "execute",
+      ...result,
       durationMs: duration,
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    console.error('[Cron:Execute] Pipeline error:', error);
+    const duration = Date.now() - startTime;
+    const errorMsg =
+      error instanceof Error ? error.message : "Unknown error";
+
+    await completePipelineRun(runId, {
+      status: "error",
+      marketsProcessed: 0,
+      durationMs: duration,
+      error: errorMsg,
+    });
+
+    console.error("[Cron:Execute] Pipeline error:", error);
     return Response.json(
-      {
-        status: 'error',
-        pipeline: 'execute',
-        error: error instanceof Error ? error.message : 'Unknown error',
-        timestamp: new Date().toISOString(),
-      },
+      { status: "error", pipeline: "execute", error: errorMsg },
       { status: 500 }
     );
   }
