@@ -1,11 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import crypto from "crypto";
 
 const SITE_PASSWORD = process.env.SITE_PASSWORD || "Quantbot1$";
 
-function hashToken(token: string): string {
-  return crypto.createHash("sha256").update(token).digest("hex");
+async function hashToken(token: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(token);
+  const hashBuffer = await globalThis.crypto.subtle.digest("SHA-256", data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function generateToken(): string {
+  const bytes = new Uint8Array(32);
+  globalThis.crypto.getRandomValues(bytes);
+  return Array.from(bytes)
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
 }
 
 export async function POST(request: NextRequest) {
@@ -16,8 +27,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid password" }, { status: 401 });
   }
 
-  const sessionToken = crypto.randomBytes(32).toString("hex");
-  const hashedToken = hashToken(sessionToken);
+  const sessionToken = generateToken();
+  const hashedToken = await hashToken(sessionToken);
 
   const cookieStore = await cookies();
   cookieStore.set("session", `${sessionToken}:${hashedToken}`, {

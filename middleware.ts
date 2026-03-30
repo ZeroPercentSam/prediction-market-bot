@@ -1,17 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
-import crypto from "crypto";
 
-function hashToken(token: string): string {
-  return crypto.createHash("sha256").update(token).digest("hex");
+async function hashToken(token: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(token);
+  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-function isValidSession(cookieValue: string): boolean {
+async function isValidSession(cookieValue: string): Promise<boolean> {
   const [token, storedHash] = cookieValue.split(":");
   if (!token || !storedHash) return false;
-  return hashToken(token) === storedHash;
+  const computed = await hashToken(token);
+  return computed === storedHash;
 }
 
-export function middleware(request: NextRequest) {
+export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // Allow login page, auth API, and static assets through
@@ -30,7 +34,7 @@ export function middleware(request: NextRequest) {
 
   const session = request.cookies.get("session")?.value;
 
-  if (!session || !isValidSession(session)) {
+  if (!session || !(await isValidSession(session))) {
     const loginUrl = new URL("/login", request.url);
     return NextResponse.redirect(loginUrl);
   }
