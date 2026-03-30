@@ -282,7 +282,7 @@ export default function TradesPage() {
                         </Badge>
                       </td>
                       <td className="px-4 py-3 text-right font-mono text-zinc-300">
-                        ${(trade.entry_price ?? 0).toFixed(2)}
+                        ${(trade.entry_price ?? 0).toFixed(4)}
                       </td>
                       <td className="px-4 py-3 text-right font-mono text-zinc-300">
                         {currentPrice != null ? (
@@ -295,7 +295,7 @@ export default function TradesPage() {
                                 : "text-zinc-300"
                             }
                           >
-                            ${currentPrice.toFixed(2)}
+                            ${currentPrice.toFixed(4)}
                           </span>
                         ) : (
                           <span className="text-zinc-500">--</span>

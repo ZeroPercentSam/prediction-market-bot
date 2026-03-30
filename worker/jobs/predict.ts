@@ -72,6 +72,15 @@ export async function runPredictJob(): Promise<void> {
       return;
     }
 
+    // Build set of markets with existing active trades (skip signal generation for these)
+    const { data: activeTrades } = await supabase
+      .from("trades")
+      .select("market_id")
+      .in("status", ["pending", "filled", "partial"]);
+    const marketsWithActiveTrades = new Set<string>(
+      (activeTrades || []).map((t) => t.market_id)
+    );
+
     let totalSignals = 0;
     let totalCost = 0;
 
@@ -79,7 +88,7 @@ export async function runPredictJob(): Promise<void> {
     for (let i = 0; i < markets.length; i += PARALLEL_MARKETS) {
       const batch = markets.slice(i, i + PARALLEL_MARKETS);
       const results = await Promise.all(
-        batch.map((m) => predictMarket(m, modelWeights, edgeThreshold))
+        batch.map((m) => predictMarket(m, modelWeights, edgeThreshold, marketsWithActiveTrades))
       );
       for (const r of results) {
         if (r.signalGenerated) totalSignals++;
@@ -118,7 +127,8 @@ async function predictMarket(
     research_summaries: unknown;
   },
   modelWeights: Record<AIModel, number>,
-  edgeThreshold: number
+  edgeThreshold: number,
+  marketsWithActiveTrades: Set<string>
 ): Promise<{ signalGenerated: boolean; totalCost: number }> {
   try {
     const marketPrice = Number(market.current_yes_price);
@@ -328,8 +338,8 @@ What is the probability this resolves YES?`;
         console.error(`[predict] Failed to insert model_estimates:`, estError.message);
       }
 
-      // Create trade signal if generated
-      if (signalGenerated && signalDirection) {
+      // Create trade signal if generated (skip if market already has an active trade)
+      if (signalGenerated && signalDirection && !marketsWithActiveTrades.has(market.id)) {
         const { error: sigError } = await supabase.from("trade_signals").insert({
           prediction_id: pred.id,
           market_id: market.id,
