@@ -32,7 +32,7 @@ export function useDashboardStats() {
         activeMarkets: activeMarkets ?? 0,
         openPositions: openTrades ?? 0,
         pendingSignals: pendingSignals ?? 0,
-        bankroll: risk?.bankroll ?? 10000,
+        bankroll: risk?.bankroll ?? 0,
         dailyPnl: risk?.daily_pnl ?? 0,
         dailyPnlPct: risk?.daily_pnl_pct ?? 0,
         winRate: perf?.win_rate ?? 0,
@@ -40,6 +40,86 @@ export function useDashboardStats() {
         maxDrawdown: perf?.max_drawdown ?? 0,
         workerHeartbeat: heartbeat?.value ?? null,
         killSwitchActive: risk?.kill_switch_active ?? false,
+      };
+    },
+  });
+}
+
+// --- Live P&L ---
+export interface LivePnlTrade {
+  tradeId: string;
+  question: string;
+  platform: string;
+  direction: string;
+  entryPrice: number;
+  currentPrice: number;
+  positionSize: number;
+  unrealizedPnl: number;
+  unrealizedPnlPct: number;
+  notes: string | null;
+}
+
+export interface LivePnlData {
+  trades: LivePnlTrade[];
+  totalUnrealizedPnl: number;
+  totalExposure: number;
+  tradeCount: number;
+}
+
+export function useLivePnl() {
+  return useQuery({
+    queryKey: ["live-pnl"],
+    refetchInterval: 30_000,
+    queryFn: async (): Promise<LivePnlData> => {
+      const { data } = await supabase
+        .from("trades")
+        .select("*, markets(question, platform, current_yes_price, current_no_price)")
+        .eq("status", "filled")
+        .order("created_at", { ascending: false });
+
+      const openTrades = data ?? [];
+
+      const trades: LivePnlTrade[] = openTrades.map((t) => {
+        const entryPrice = Number(t.entry_price) || 0;
+        const positionSize = Number(t.position_size) || 0;
+        let currentPrice: number;
+        let unrealizedPnl: number;
+        let unrealizedPnlPct: number;
+
+        if (t.direction === "buy_yes") {
+          currentPrice = Number(t.markets?.current_yes_price) || 0;
+          unrealizedPnl = entryPrice > 0 ? (currentPrice - entryPrice) * (positionSize / entryPrice) : 0;
+          unrealizedPnlPct = entryPrice > 0 ? ((currentPrice - entryPrice) / entryPrice) * 100 : 0;
+        } else {
+          const entryNoPrice = 1 - entryPrice; // what we paid for NO
+          const currentNoPrice = Number(t.markets?.current_no_price) || (1 - Number(t.markets?.current_yes_price));
+          currentPrice = currentNoPrice;
+          unrealizedPnl = entryNoPrice > 0 ? (currentNoPrice - entryNoPrice) * (positionSize / entryNoPrice) : 0;
+          unrealizedPnlPct = entryNoPrice > 0 ? ((currentNoPrice - entryNoPrice) / entryNoPrice) * 100 : 0;
+        }
+
+        return {
+          tradeId: t.id,
+          question: t.markets?.question ?? "Unknown market",
+          platform: t.markets?.platform ?? t.platform ?? "unknown",
+          direction: t.direction,
+          entryPrice,
+          currentPrice,
+          positionSize,
+          unrealizedPnl,
+          unrealizedPnlPct,
+          notes: t.notes ?? null,
+        };
+      });
+
+      const totalUnrealizedPnl = trades.reduce((sum, t) => sum + t.unrealizedPnl, 0);
+      const totalExposure = trades.reduce((sum, t) => sum + t.positionSize, 0);
+
+      return {
+        trades,
+        totalUnrealizedPnl,
+        totalExposure,
+        tradeCount: trades.length,
       };
     },
   });
@@ -149,6 +229,7 @@ export interface StrategyStats {
   totalTrades: number;
   winRate: number;
   totalPnl: number;
+  unrealizedPnl: number;
   avgPnl: number;
   bestTrade: number;
   worstTrade: number;
@@ -182,10 +263,10 @@ export function useStrategyPerformance() {
         .select("*, markets(question)")
         .eq("status", "settled");
 
-      // Fetch active trades
+      // Fetch active trades with market prices for unrealized P&L
       const { data: activeTrades } = await supabase
         .from("trades")
-        .select("*, markets(question)")
+        .select("*, markets(question, current_yes_price, current_no_price)")
         .eq("status", "filled");
 
       // Fetch recent trades (last 20 per strategy — fetch more to ensure coverage)
@@ -219,25 +300,56 @@ export function useStrategyPerformance() {
         const worstTrade = pnls.length > 0 ? Math.min(...pnls) : 0;
         const totalVolume = settled.reduce((sum, t) => sum + (t.position_size ?? 0), 0);
 
+        // Compute unrealized P&L for active trades from current market prices
+        const unrealizedPnl = active.reduce((sum, t) => {
+          const entryPrice = Number(t.entry_price) || 0;
+          const positionSize = Number(t.position_size) || 0;
+          if (t.direction === "buy_yes") {
+            const currentPrice = Number(t.markets?.current_yes_price) || 0;
+            return sum + (entryPrice > 0 ? (currentPrice - entryPrice) * (positionSize / entryPrice) : 0);
+          } else {
+            const entryNoPrice = 1 - entryPrice;
+            const currentNoPrice = Number(t.markets?.current_no_price) || (1 - Number(t.markets?.current_yes_price));
+            return sum + (entryNoPrice > 0 ? (currentNoPrice - entryNoPrice) * (positionSize / entryNoPrice) : 0);
+          }
+        }, 0);
+
         results[strategy] = {
           name: strategy,
           totalTrades,
           winRate,
           totalPnl,
+          unrealizedPnl,
           avgPnl,
           bestTrade,
           worstTrade,
           totalVolume,
           activeTrades: active.length,
-          recentTrades: recent.map((t) => ({
-            id: t.id,
-            question: t.markets?.question ?? "Unknown market",
-            direction: t.direction,
-            entry_price: t.entry_price ?? 0,
-            pnl: t.pnl,
-            status: t.status,
-            created_at: t.created_at,
-          })),
+          recentTrades: recent.map((t) => {
+            // For active trades, compute unrealized P&L from market prices
+            let pnl = t.pnl;
+            if (t.status === "filled") {
+              const entryPrice = Number(t.entry_price) || 0;
+              const positionSize = Number(t.position_size) || 0;
+              if (t.direction === "buy_yes") {
+                const currentPrice = Number(t.markets?.current_yes_price) || 0;
+                pnl = entryPrice > 0 ? (currentPrice - entryPrice) * (positionSize / entryPrice) : 0;
+              } else {
+                const entryNoPrice = 1 - entryPrice;
+                const currentNoPrice = Number(t.markets?.current_no_price) || (1 - Number(t.markets?.current_yes_price));
+                pnl = entryNoPrice > 0 ? (currentNoPrice - entryNoPrice) * (positionSize / entryNoPrice) : 0;
+              }
+            }
+            return {
+              id: t.id,
+              question: t.markets?.question ?? "Unknown market",
+              direction: t.direction,
+              entry_price: t.entry_price ?? 0,
+              pnl,
+              status: t.status,
+              created_at: t.created_at,
+            };
+          }),
         };
       }
 
@@ -403,7 +515,7 @@ export function useRiskData() {
           .limit(1),
         supabase
           .from("trades")
-          .select("platform")
+          .select("platform, position_size")
           .in("status", ["pending", "filled", "partial"]),
         supabase
           .from("trades")
@@ -434,12 +546,12 @@ export function useRiskData() {
 
       const risk = latestRisk?.[0];
 
-      // Group active trades by platform
+      // Group active trades by platform — sum position_size (dollar exposure)
       const exposureByPlatform: Record<string, number> = {};
       if (activeTrades) {
         for (const trade of activeTrades) {
           const p = trade.platform ?? "unknown";
-          exposureByPlatform[p] = (exposureByPlatform[p] ?? 0) + 1;
+          exposureByPlatform[p] = (exposureByPlatform[p] ?? 0) + (Number(trade.position_size) || 0);
         }
       }
 

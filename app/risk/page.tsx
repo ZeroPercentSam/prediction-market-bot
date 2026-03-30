@@ -13,10 +13,11 @@ import {
   Zap,
   Loader2,
 } from "lucide-react";
-import { useRiskData, useToggleKillSwitch } from "@/lib/hooks/use-dashboard-data";
+import { useRiskData, useLivePnl, useToggleKillSwitch } from "@/lib/hooks/use-dashboard-data";
 
 export default function RiskPage() {
   const { data: risk, isLoading, error } = useRiskData();
+  const { data: livePnl } = useLivePnl();
   const killSwitch = useToggleKillSwitch();
 
   if (isLoading) {
@@ -37,16 +38,21 @@ export default function RiskPage() {
 
   if (!risk) return null;
 
+  const totalUnrealized = livePnl?.totalUnrealizedPnl ?? 0;
+  const combinedDailyPnl = risk.dailyPnl + totalUnrealized;
+  const liveExposure = livePnl?.totalExposure ?? risk.totalExposure;
+  const combinedDailyPnlPct = risk.bankroll > 0 ? (combinedDailyPnl / risk.bankroll) * 100 : 0;
+
   const dailyLossUsed = risk.bankroll
-    ? Math.abs(risk.dailyPnl) / risk.bankroll
+    ? Math.abs(combinedDailyPnl) / risk.bankroll
     : 0;
   const lossLimitProgress =
     risk.dailyLossLimitPct > 0
       ? (dailyLossUsed / risk.dailyLossLimitPct) * 100
       : 0;
   const exposurePct =
-    risk.bankroll > 0 ? (risk.totalExposure / risk.bankroll) * 100 : 0;
-  const pnlIsNegative = risk.dailyPnl < 0;
+    risk.bankroll > 0 ? (liveExposure / risk.bankroll) * 100 : 0;
+  const pnlIsNegative = combinedDailyPnl < 0;
   const PnlIcon = pnlIsNegative ? TrendingDown : TrendingUp;
 
   function handleKillSwitch() {
@@ -78,7 +84,7 @@ export default function RiskPage() {
             <DollarSign className="h-4 w-4 text-zinc-500" />
           </div>
           <p className="text-2xl font-bold text-white">
-            ${risk.totalExposure.toLocaleString()}
+            ${liveExposure.toLocaleString()}
           </p>
           <p className="text-xs text-zinc-500 mt-1">
             {exposurePct.toFixed(1)}% of bankroll
@@ -119,12 +125,13 @@ export default function RiskPage() {
           <p
             className={`text-2xl font-bold ${pnlIsNegative ? "text-red-500" : "text-emerald-500"}`}
           >
-            ${risk.dailyPnl.toFixed(2)}
+            ${combinedDailyPnl.toFixed(2)}
           </p>
           <p
             className={`text-xs mt-1 ${pnlIsNegative ? "text-red-400" : "text-emerald-400"}`}
           >
-            {risk.dailyPnlPct.toFixed(2)}% of bankroll
+            {combinedDailyPnlPct.toFixed(2)}% of bankroll
+            {totalUnrealized !== 0 && ` (${totalUnrealized >= 0 ? "+" : ""}$${totalUnrealized.toFixed(2)} unrealized)`}
           </p>
         </Card>
       </div>
@@ -172,12 +179,12 @@ export default function RiskPage() {
               <p className="text-sm text-zinc-500">No active positions</p>
             ) : (
               Object.entries(risk.exposureByPlatform).map(
-                ([platform, count]) => {
+                ([platform, amount]) => {
                   const total = Object.values(risk.exposureByPlatform).reduce(
                     (a, b) => a + b,
                     0
                   );
-                  const pct = total > 0 ? (count / total) * 100 : 0;
+                  const pct = total > 0 ? (amount / total) * 100 : 0;
                   return (
                     <div key={platform}>
                       <div className="flex items-center justify-between mb-1">
@@ -185,7 +192,7 @@ export default function RiskPage() {
                           {platform}
                         </span>
                         <span className="text-sm font-mono text-zinc-400">
-                          {count} trades ({pct.toFixed(0)}%)
+                          ${amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ({pct.toFixed(0)}%)
                         </span>
                       </div>
                       <div className="h-2 rounded-full bg-zinc-800 overflow-hidden">

@@ -1,5 +1,3 @@
-export const runtime = 'edge';
-
 import { createServerClient } from "@/lib/supabase/client";
 
 export async function POST(request: Request) {
@@ -31,12 +29,8 @@ export async function POST(request: Request) {
       .from('system_config')
       .upsert(
         {
-          key: 'kill_switch',
-          value: {
-            active,
-            updatedAt: new Date().toISOString(),
-            updatedBy: 'dashboard',
-          },
+          key: 'kill_switch_active',
+          value: active,
         },
         { onConflict: 'key' }
       );

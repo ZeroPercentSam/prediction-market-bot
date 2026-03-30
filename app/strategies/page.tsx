@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import {
   useStrategyPerformance,
+  useLivePnl,
   type StrategyName,
   type StrategyStats,
 } from "@/lib/hooks/use-dashboard-data";
@@ -120,12 +121,19 @@ function StrategyCard({ stats }: { stats: StrategyStats }) {
       <div className="mb-4">
         <p
           className={`text-2xl font-bold ${
-            stats.totalPnl >= 0 ? "text-emerald-500" : "text-red-500"
+            (stats.totalPnl + stats.unrealizedPnl) >= 0 ? "text-emerald-500" : "text-red-500"
           }`}
         >
-          {formatPnl(stats.totalPnl)}
+          {formatPnl(stats.totalPnl + stats.unrealizedPnl)}
         </p>
-        <p className="text-xs text-zinc-500 mt-0.5">Total P&L</p>
+        <p className="text-xs text-zinc-500 mt-0.5">
+          Total P&L
+          {stats.unrealizedPnl !== 0 && (
+            <span className="text-zinc-600">
+              {" "}({formatPnl(stats.unrealizedPnl)} unrealized)
+            </span>
+          )}
+        </p>
       </div>
 
       <div className="grid grid-cols-2 gap-x-4 gap-y-2">
@@ -174,7 +182,7 @@ function ComparisonTable({
   }[] = [
     { label: "Total Trades", getValue: (s) => String(s.totalTrades) },
     { label: "Win Rate", getValue: (s) => `${s.winRate.toFixed(1)}%` },
-    { label: "Total P&L", getValue: (s) => formatPnl(s.totalPnl), colorize: true },
+    { label: "Total P&L", getValue: (s) => formatPnl(s.totalPnl + s.unrealizedPnl), colorize: true },
     { label: "Avg P&L/Trade", getValue: (s) => formatPnl(s.avgPnl), colorize: true },
     { label: "Best Trade", getValue: (s) => formatPnl(s.bestTrade), colorize: true },
     { label: "Worst Trade", getValue: (s) => formatPnl(s.worstTrade), colorize: true },

@@ -13,6 +13,8 @@ import {
 } from "lucide-react";
 import {
   usePerformanceMetrics,
+  useDashboardStats,
+  useLivePnl,
   useEquityCurve,
   useModelAccuracy,
   usePnlHistory,
@@ -88,10 +90,38 @@ function StatCard({
 
 export default function AnalyticsPage() {
   const { data: allMetrics, isLoading, error } = usePerformanceMetrics();
+  const { data: stats } = useDashboardStats();
+  const { data: livePnl } = useLivePnl();
   const { data: equityCurveData } = useEquityCurve();
   const { data: modelAccuracyData } = useModelAccuracy();
   const { data: pnlHistoryData } = usePnlHistory();
   const [selectedPeriod, setSelectedPeriod] = useState<Period>("30d");
+
+  const totalUnrealized = livePnl?.totalUnrealizedPnl ?? 0;
+  const bankroll = stats?.bankroll ?? 0;
+  const hasOpenPositions = (livePnl?.tradeCount ?? 0) > 0;
+
+  // Append a live "now" data point to the equity curve
+  const equityCurveWithLive = [
+    ...(equityCurveData ?? []),
+    ...(hasOpenPositions
+      ? [{ date: new Date().toISOString(), equity: bankroll + totalUnrealized }]
+      : []),
+  ];
+
+  // Append a live data point to cumulative P&L
+  const pnlHistoryWithLive = (() => {
+    const base = pnlHistoryData ?? [];
+    if (!hasOpenPositions || base.length === 0) return base;
+    const lastCumulative = base[base.length - 1]?.pnl ?? 0;
+    return [
+      ...base,
+      {
+        date: new Date().toISOString(),
+        pnl: Math.round((lastCumulative + totalUnrealized) * 100) / 100,
+      },
+    ];
+  })();
 
   if (isLoading) return <LoadingSkeleton />;
 
@@ -276,14 +306,14 @@ export default function AnalyticsPage() {
           <h3 className="mb-4 text-sm font-medium text-zinc-400">
             Equity Curve
           </h3>
-          <EquityCurve data={equityCurveData ?? []} />
+          <EquityCurve data={equityCurveWithLive} />
         </Card>
 
         <Card className="border-zinc-800 bg-zinc-900/50 p-6">
           <h3 className="mb-4 text-sm font-medium text-zinc-400">
             Cumulative P&L
           </h3>
-          <PnlChart data={pnlHistoryData ?? []} />
+          <PnlChart data={pnlHistoryWithLive} />
         </Card>
       </div>
 

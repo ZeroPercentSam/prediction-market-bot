@@ -15,6 +15,7 @@ import { runArbExecuteJob } from "./jobs/arb-execute.js";
 import { runCompoundJob } from "./jobs/compound.js";
 import { runWhaleScanJob } from "./jobs/whale-scan.js";
 import { runCertaintyScanJob } from "./jobs/certainty-scan.js";
+import { runPnlUpdateJob } from "./jobs/pnl-update.js";
 import { writeHeartbeat, isKillSwitchActive } from "./lib/config.js";
 
 console.log("=== Prediction Market Bot Worker ===");
@@ -29,6 +30,7 @@ console.log("  Arb Exec: every 5 minutes (arb paper trades)");
 console.log("  Compound: every hour");
 console.log("  Whale Scan: every 10 minutes");
 console.log("  Certainty:  every 10 minutes (near-resolved markets)");
+console.log("  P&L Update: every 5 minutes (live unrealized P&L)");
 console.log("  Heartbeat: every minute");
 console.log("");
 
@@ -106,6 +108,11 @@ cron.schedule("3,13,23,33,43,53 * * * *", () => {
 // Certainty Scan: every 10 minutes at :08 offset
 cron.schedule("8,18,28,38,48,58 * * * *", () => {
   runJob("certainty-scan", runCertaintyScanJob);
+});
+
+// P&L Update: every 5 minutes at :01 offset
+cron.schedule("1,6,11,16,21,26,31,36,41,46,51,56 * * * *", () => {
+  runJob("pnl-update", runPnlUpdateJob);
 });
 
 // Heartbeat: every minute

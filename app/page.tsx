@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import {
   useDashboardStats,
+  useLivePnl,
   usePipelineStatus,
   usePipelineRuns,
   useEquityCurve,
@@ -52,6 +53,7 @@ function formatRelativeTime(dateString: string): string {
 
 export default function OverviewPage() {
   const { data: stats, isLoading: statsLoading } = useDashboardStats();
+  const { data: livePnl } = useLivePnl();
   const { data: pipelineStatuses, isLoading: pipelineLoading } =
     usePipelineStatus();
   const { data: pipelineRuns, isLoading: runsLoading } = usePipelineRuns(10);
@@ -68,6 +70,8 @@ export default function OverviewPage() {
   }
 
   const bankroll = stats?.bankroll ?? 0;
+  const totalUnrealized = livePnl?.totalUnrealizedPnl ?? 0;
+  const adjustedBankroll = bankroll + totalUnrealized;
   const dailyPnl = stats?.dailyPnl ?? 0;
   const dailyPnlPct = stats?.dailyPnlPct ?? 0;
   const winRate = stats?.winRate ?? 0;
@@ -75,9 +79,18 @@ export default function OverviewPage() {
   const openPositions = stats?.openPositions ?? 0;
   const activeMarkets = stats?.activeMarkets ?? 0;
   const pendingSignals = stats?.pendingSignals ?? 0;
+  const hasOpenPositions = (livePnl?.tradeCount ?? 0) > 0;
 
   const pnlSign = dailyPnl >= 0 ? "+" : "";
   const pnlChangeType = dailyPnl >= 0 ? "positive" : "negative";
+
+  // Append a live "now" data point to the equity curve
+  const equityCurveWithLive = [
+    ...(equityCurveData ?? []),
+    ...(hasOpenPositions
+      ? [{ date: new Date().toISOString(), equity: adjustedBankroll }]
+      : []),
+  ];
 
   const defaultStatuses: Record<PipelineStage, "idle" | "running" | "error"> = {
     scan: "idle",
@@ -100,8 +113,9 @@ export default function OverviewPage() {
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
           title="Total Bankroll"
-          value={`$${bankroll.toLocaleString()}`}
+          value={`$${adjustedBankroll.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
           icon={DollarSign}
+          description={hasOpenPositions ? "Includes unrealized" : undefined}
         />
         <StatCard
           title="Daily P&L"
@@ -109,6 +123,11 @@ export default function OverviewPage() {
           change={`${pnlSign}${dailyPnlPct.toFixed(2)}%`}
           changeType={pnlChangeType}
           icon={TrendingUp}
+          description={
+            hasOpenPositions
+              ? `${totalUnrealized >= 0 ? "+" : ""}$${totalUnrealized.toFixed(2)} unrealized`
+              : undefined
+          }
         />
         <StatCard
           title="Win Rate"
@@ -220,7 +239,7 @@ export default function OverviewPage() {
           <h3 className="mb-4 text-sm font-medium text-zinc-400">
             Equity Curve
           </h3>
-          <EquityCurve data={equityCurveData ?? []} />
+          <EquityCurve data={equityCurveWithLive} />
         </Card>
       </div>
     </div>

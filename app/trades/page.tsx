@@ -2,8 +2,8 @@
 
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Activity, TrendingUp, TrendingDown, Loader2, Inbox } from "lucide-react";
-import { useTrades } from "@/lib/hooks/use-dashboard-data";
+import { Activity, TrendingUp, TrendingDown, Loader2, Inbox, BarChart3 } from "lucide-react";
+import { useTrades, useLivePnl } from "@/lib/hooks/use-dashboard-data";
 
 function formatRelativeTime(dateStr: string): string {
   const now = Date.now();
@@ -46,6 +46,7 @@ function LoadingSkeleton() {
 
 export default function TradesPage() {
   const { data: trades, isLoading, error } = useTrades("filled", 50);
+  const { data: livePnl } = useLivePnl();
 
   if (isLoading) return <LoadingSkeleton />;
 
@@ -61,8 +62,20 @@ export default function TradesPage() {
   }
 
   const openTrades = trades ?? [];
-  const totalExposure = openTrades.reduce((sum, t) => sum + (t.position_size ?? 0), 0);
-  const totalPnl = openTrades.reduce((sum, t) => sum + (t.pnl ?? 0), 0);
+  const totalExposure = livePnl?.totalExposure ?? openTrades.reduce((sum, t) => sum + (t.position_size ?? 0), 0);
+  const totalPnl = livePnl?.totalUnrealizedPnl ?? openTrades.reduce((sum, t) => sum + (t.pnl ?? 0), 0);
+
+  // Build a lookup map from live P&L data for per-trade current prices
+  const livePnlMap = new Map<string, { currentPrice: number; unrealizedPnl: number; unrealizedPnlPct: number }>();
+  if (livePnl) {
+    for (const t of livePnl.trades) {
+      livePnlMap.set(t.tradeId, {
+        currentPrice: t.currentPrice,
+        unrealizedPnl: t.unrealizedPnl,
+        unrealizedPnlPct: t.unrealizedPnlPct,
+      });
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -92,6 +105,37 @@ export default function TradesPage() {
         )}
       </div>
 
+      {/* Live P&L Summary */}
+      {openTrades.length > 0 && (
+        <div className="grid grid-cols-3 gap-4">
+          <Card className="border-zinc-800 bg-zinc-900/50 p-4">
+            <div className="flex items-center gap-2 text-zinc-400 text-xs mb-1">
+              <BarChart3 className="h-3 w-3" />
+              Unrealized P&L
+            </div>
+            <div
+              className={`text-2xl font-bold font-mono ${
+                totalPnl >= 0 ? "text-emerald-500" : "text-red-500"
+              }`}
+            >
+              {totalPnl >= 0 ? "+" : ""}${totalPnl.toFixed(2)}
+            </div>
+          </Card>
+          <Card className="border-zinc-800 bg-zinc-900/50 p-4">
+            <div className="text-xs text-zinc-400 mb-1">Total Exposure</div>
+            <div className="text-2xl font-bold font-mono text-white">
+              ${totalExposure.toLocaleString("en-US", { minimumFractionDigits: 2 })}
+            </div>
+          </Card>
+          <Card className="border-zinc-800 bg-zinc-900/50 p-4">
+            <div className="text-xs text-zinc-400 mb-1">Open Positions</div>
+            <div className="text-2xl font-bold font-mono text-white">
+              {livePnl?.tradeCount ?? openTrades.length}
+            </div>
+          </Card>
+        </div>
+      )}
+
       {openTrades.length === 0 ? (
         <Card className="border-zinc-800 bg-zinc-900/50 p-12">
           <div className="flex flex-col items-center justify-center text-center">
@@ -114,76 +158,106 @@ export default function TradesPage() {
                     Entry Price
                   </th>
                   <th className="px-4 py-3 font-medium text-zinc-400 text-right">
+                    Current Price
+                  </th>
+                  <th className="px-4 py-3 font-medium text-zinc-400 text-right">
                     Position Size
                   </th>
                   <th className="px-4 py-3 font-medium text-zinc-400 text-right">
                     Kelly f
                   </th>
                   <th className="px-4 py-3 font-medium text-zinc-400 text-right">
-                    P&L
+                    Unrealized P&L
+                  </th>
+                  <th className="px-4 py-3 font-medium text-zinc-400 text-right">
+                    P&L %
                   </th>
                   <th className="px-4 py-3 font-medium text-zinc-400">Status</th>
                   <th className="px-4 py-3 font-medium text-zinc-400">Opened</th>
                 </tr>
               </thead>
               <tbody>
-                {openTrades.map((trade) => (
-                  <tr
-                    key={trade.id}
-                    className="border-b border-zinc-800/50 hover:bg-zinc-800/30 transition-colors"
-                  >
-                    <td className="px-4 py-3 text-white max-w-xs truncate">
-                      {trade.markets?.question ?? "Unknown market"}
-                    </td>
-                    <td className="px-4 py-3">
-                      <Badge
-                        className={`text-xs ${
-                          trade.direction === "buy_yes"
-                            ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/20"
-                            : "bg-red-500/10 text-red-500 border-red-500/20"
+                {openTrades.map((trade) => {
+                  const live = livePnlMap.get(trade.id);
+                  const pnl = live?.unrealizedPnl ?? (trade.pnl ?? 0);
+                  const pnlPct = live?.unrealizedPnlPct ?? (trade.pnl_pct ?? 0);
+                  const currentPrice = live?.currentPrice ?? null;
+
+                  return (
+                    <tr
+                      key={trade.id}
+                      className="border-b border-zinc-800/50 hover:bg-zinc-800/30 transition-colors"
+                    >
+                      <td className="px-4 py-3 text-white max-w-xs truncate">
+                        {trade.markets?.question ?? "Unknown market"}
+                      </td>
+                      <td className="px-4 py-3">
+                        <Badge
+                          className={`text-xs ${
+                            trade.direction === "buy_yes"
+                              ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/20"
+                              : "bg-red-500/10 text-red-500 border-red-500/20"
+                          }`}
+                        >
+                          {trade.direction === "buy_yes" ? "BUY YES" : "BUY NO"}
+                        </Badge>
+                      </td>
+                      <td className="px-4 py-3 text-right font-mono text-zinc-300">
+                        ${(trade.entry_price ?? 0).toFixed(2)}
+                      </td>
+                      <td className="px-4 py-3 text-right font-mono text-zinc-300">
+                        {currentPrice != null ? (
+                          <span
+                            className={
+                              currentPrice > (trade.entry_price ?? 0)
+                                ? "text-emerald-400"
+                                : currentPrice < (trade.entry_price ?? 0)
+                                ? "text-red-400"
+                                : "text-zinc-300"
+                            }
+                          >
+                            ${currentPrice.toFixed(2)}
+                          </span>
+                        ) : (
+                          <span className="text-zinc-500">--</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-right font-mono text-zinc-300">
+                        <div>${(trade.position_size ?? 0).toLocaleString()}</div>
+                        <div className="text-xs text-zinc-500">
+                          {((trade.position_size_pct ?? 0) * 100).toFixed(1)}% of bankroll
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-right font-mono text-zinc-300">
+                        {((trade.kelly_fraction ?? 0) * 100).toFixed(1)}%
+                      </td>
+                      <td
+                        className={`px-4 py-3 text-right font-mono font-semibold ${
+                          pnl >= 0 ? "text-emerald-500" : "text-red-500"
                         }`}
                       >
-                        {trade.direction === "buy_yes" ? "BUY YES" : "BUY NO"}
-                      </Badge>
-                    </td>
-                    <td className="px-4 py-3 text-right font-mono text-zinc-300">
-                      ${(trade.entry_price ?? 0).toFixed(2)}
-                    </td>
-                    <td className="px-4 py-3 text-right font-mono text-zinc-300">
-                      <div>${(trade.position_size ?? 0).toLocaleString()}</div>
-                      <div className="text-xs text-zinc-500">
-                        {((trade.position_size_pct ?? 0) * 100).toFixed(1)}% of bankroll
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 text-right font-mono text-zinc-300">
-                      {((trade.kelly_fraction ?? 0) * 100).toFixed(1)}%
-                    </td>
-                    <td
-                      className={`px-4 py-3 text-right font-mono font-semibold ${
-                        (trade.pnl ?? 0) >= 0 ? "text-emerald-500" : "text-red-500"
-                      }`}
-                    >
-                      <div>
-                        {(trade.pnl ?? 0) >= 0 ? "+" : ""}${(trade.pnl ?? 0).toFixed(2)}
-                      </div>
-                      {trade.pnl_pct != null && (
-                        <div className="text-xs font-normal">
-                          {trade.pnl_pct >= 0 ? "+" : ""}
-                          {trade.pnl_pct.toFixed(2)}%
-                        </div>
-                      )}
-                    </td>
-                    <td className="px-4 py-3">
-                      <Badge variant="secondary" className="text-xs capitalize">
-                        <Activity className="h-3 w-3 mr-1" />
-                        {trade.status}
-                      </Badge>
-                    </td>
-                    <td className="px-4 py-3 text-xs text-zinc-500">
-                      {trade.created_at ? formatRelativeTime(trade.created_at) : "--"}
-                    </td>
-                  </tr>
-                ))}
+                        {pnl >= 0 ? "+" : ""}${pnl.toFixed(2)}
+                      </td>
+                      <td
+                        className={`px-4 py-3 text-right font-mono text-xs ${
+                          pnlPct >= 0 ? "text-emerald-500" : "text-red-500"
+                        }`}
+                      >
+                        {pnlPct >= 0 ? "+" : ""}
+                        {pnlPct.toFixed(2)}%
+                      </td>
+                      <td className="px-4 py-3">
+                        <Badge variant="secondary" className="text-xs capitalize">
+                          <Activity className="h-3 w-3 mr-1" />
+                          {trade.status}
+                        </Badge>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-zinc-500">
+                        {trade.created_at ? formatRelativeTime(trade.created_at) : "--"}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

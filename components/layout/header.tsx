@@ -2,23 +2,30 @@
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Bell, DollarSign, Power, Loader2 } from "lucide-react";
+import { DollarSign, Power, Loader2 } from "lucide-react";
 import {
   useDashboardStats,
   useToggleKillSwitch,
+  useLivePnl,
 } from "@/lib/hooks/use-dashboard-data";
 
 export function Header() {
   const { data: stats } = useDashboardStats();
   const killSwitch = useToggleKillSwitch();
+  const { data: livePnl } = useLivePnl();
 
   const bankroll = stats?.bankroll ?? 0;
   const dailyPnl = stats?.dailyPnl ?? 0;
   const killSwitchActive = stats?.killSwitchActive ?? false;
   const workerHeartbeat = stats?.workerHeartbeat ?? null;
 
+  const unrealizedPnl = livePnl?.totalUnrealizedPnl ?? 0;
+  const hasOpenPositions = (livePnl?.tradeCount ?? 0) > 0;
+
   const pnlColor = dailyPnl >= 0 ? "text-emerald-500" : "text-red-500";
   const pnlSign = dailyPnl >= 0 ? "+" : "";
+  const unrealizedColor = unrealizedPnl >= 0 ? "text-emerald-400" : "text-red-400";
+  const unrealizedSign = unrealizedPnl >= 0 ? "+" : "";
 
   const isWorkerActive =
     workerHeartbeat != null &&
@@ -42,6 +49,16 @@ export function Header() {
               minimumFractionDigits: 2,
             })}
           </span>
+          {hasOpenPositions && (
+            <span
+              className={`text-xs px-1.5 py-0.5 rounded-md bg-zinc-800 ${unrealizedColor}`}
+            >
+              Unrealized: {unrealizedSign}$
+              {Math.abs(unrealizedPnl).toLocaleString("en-US", {
+                minimumFractionDigits: 2,
+              })}
+            </span>
+          )}
         </div>
         <Badge variant={killSwitchActive ? "destructive" : "secondary"}>
           {killSwitchActive ? "HALTED" : "PAPER TRADING"}
@@ -58,13 +75,6 @@ export function Header() {
         </div>
       </div>
       <div className="flex items-center gap-3">
-        <Button
-          variant="ghost"
-          size="icon"
-          className="text-zinc-400 hover:text-white"
-        >
-          <Bell className="h-4 w-4" />
-        </Button>
         <Button
           variant="destructive"
           size="sm"
