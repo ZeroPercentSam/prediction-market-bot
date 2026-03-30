@@ -227,6 +227,52 @@ export async function runScanJob(): Promise<void> {
       durationMs: duration,
     });
 
+    // --- DEACTIVATE EXPIRED / RESOLVED MARKETS ---
+    let deactivatedCount = 0;
+    {
+      // Mark markets as inactive if they've expired or resolved (price near $1 or $0)
+      const { data: expiredMarkets } = await supabase
+        .from("markets")
+        .select("id, expiry_date, current_yes_price")
+        .eq("is_active", true)
+        .not("expiry_date", "is", null)
+        .lt("expiry_date", now.toISOString());
+
+      if (expiredMarkets && expiredMarkets.length > 0) {
+        const expiredIds = expiredMarkets.map((m) => m.id);
+        const { error: deactivateError } = await supabase
+          .from("markets")
+          .update({ is_active: false })
+          .in("id", expiredIds);
+        if (deactivateError) {
+          console.error("[scan] Failed to deactivate expired markets:", deactivateError.message);
+        } else {
+          deactivatedCount += expiredIds.length;
+        }
+      }
+
+      // Also deactivate markets whose price resolved to near $1.00 or $0.00
+      const { data: resolvedMarkets } = await supabase
+        .from("markets")
+        .select("id")
+        .eq("is_active", true)
+        .or("current_yes_price.gte.0.95,current_yes_price.lte.0.05");
+
+      if (resolvedMarkets && resolvedMarkets.length > 0) {
+        // Only deactivate if the market also has an expiry date in the past or is clearly settled
+        const resolvedIds = resolvedMarkets.map((m) => m.id);
+        const { error: resolveError } = await supabase
+          .from("markets")
+          .update({ is_active: false })
+          .in("id", resolvedIds)
+          .not("expiry_date", "is", null)
+          .lt("expiry_date", now.toISOString());
+        if (resolveError) {
+          console.error("[scan] Failed to deactivate resolved markets:", resolveError.message);
+        }
+      }
+    }
+
     // --- ARBITRAGE SCAN ---
     const arbOpps = await findArbOpportunities().catch((e) => {
       console.error("[scan] Arbitrage scan failed:", e.message);
@@ -234,7 +280,7 @@ export async function runScanJob(): Promise<void> {
     });
 
     console.log(
-      `[scan] ${polymarkets.length} poly + ${kalshiMarkets.length} kalshi → ${filtered.length} passed filters, ${anomalyCount} anomalies, ${arbOpps.length} arb opportunities`
+      `[scan] ${polymarkets.length} poly + ${kalshiMarkets.length} kalshi → ${filtered.length} passed filters, ${anomalyCount} anomalies, ${arbOpps.length} arb opportunities, ${deactivatedCount} deactivated`
     );
   } catch (error) {
     await completePipelineRun(runId, {

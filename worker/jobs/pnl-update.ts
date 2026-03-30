@@ -9,6 +9,7 @@
  */
 
 import { supabase, startPipelineRun, completePipelineRun, getConfig } from "../lib/config.js";
+import { calculateVaR } from "../lib/math/var.js";
 
 const GAMMA_BASE_URL = "https://gamma-api.polymarket.com";
 const KALSHI_BASE_URL = "https://api.elections.kalshi.com/trade-api/v2";
@@ -195,7 +196,7 @@ export async function runPnlUpdateJob(): Promise<void> {
     // Sum unrealized P&L from all open trades (re-fetch after updates)
     const { data: updatedTrades } = await supabase
       .from("trades")
-      .select("pnl, position_size")
+      .select("pnl, position_size, markets(category)")
       .eq("status", "filled");
 
     const totalUnrealizedPnl = (updatedTrades ?? []).reduce(
@@ -207,6 +208,14 @@ export async function runPnlUpdateJob(): Promise<void> {
       0
     );
     const openPositionCount = (updatedTrades ?? []).length;
+
+    // Compute exposure by category from active trades
+    const exposureByCategory: Record<string, number> = {};
+    for (const t of updatedTrades ?? []) {
+      const market = Array.isArray(t.markets) ? t.markets[0] : t.markets;
+      const cat = market?.category || "other";
+      exposureByCategory[cat] = (exposureByCategory[cat] ?? 0) + (Number(t.position_size) || 0);
+    }
 
     // Sum realized P&L from settled trades
     const { data: settledTrades } = await supabase
@@ -244,6 +253,25 @@ export async function runPnlUpdateJob(): Promise<void> {
     const dailyPnl = todayRealizedPnl + totalUnrealizedPnl;
     const dailyPnlPct = currentBankroll > 0 ? (dailyPnl / currentBankroll) * 100 : 0;
 
+    // Compute VaR from recent risk snapshots
+    const { data: recentSnapshots } = await supabase
+      .from("risk_snapshots")
+      .select("bankroll")
+      .order("timestamp", { ascending: true })
+      .limit(30);
+
+    let varValue = 0;
+    if (recentSnapshots && recentSnapshots.length >= 3) {
+      const dailyReturns: number[] = [];
+      for (let i = 1; i < recentSnapshots.length; i++) {
+        const prev = Number(recentSnapshots[i - 1].bankroll);
+        const curr = Number(recentSnapshots[i].bankroll);
+        if (prev > 0) dailyReturns.push((curr - prev) / prev);
+      }
+      const varResult = calculateVaR(currentBankroll, dailyReturns);
+      varValue = varResult.var95;
+    }
+
     // Check kill switch
     const killSwitchRaw = await getConfig("kill_switch_active").catch(() => false);
     const killSwitchActive = killSwitchRaw === true || killSwitchRaw === "true";
@@ -255,8 +283,8 @@ export async function runPnlUpdateJob(): Promise<void> {
       daily_pnl_pct: Math.round(dailyPnlPct * 10000) / 10000,
       open_positions: openPositionCount,
       total_exposure: Math.round(totalExposure * 100) / 100,
-      exposure_by_category: {},
-      var_value: 0,
+      exposure_by_category: exposureByCategory,
+      var_value: Math.round(varValue * 100) / 100,
       kill_switch_active: killSwitchActive,
     });
 

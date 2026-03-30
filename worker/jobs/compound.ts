@@ -12,6 +12,17 @@ export async function runCompoundJob(): Promise<void> {
   const start = Date.now();
 
   try {
+    // 0. Clean up stale "running" pipeline_runs (older than 15 minutes)
+    const staleThreshold = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+    const { error: cleanupErr } = await supabase
+      .from("pipeline_runs")
+      .update({ status: "error", error: "Stale: never completed", completed_at: new Date().toISOString() })
+      .eq("status", "running")
+      .lt("started_at", staleThreshold);
+    if (cleanupErr) {
+      console.error("[compound] Failed to clean stale pipeline_runs:", cleanupErr.message);
+    }
+
     // 1. Settle resolved trades
     const tradesSettled = await settleResolvedTrades();
 
@@ -218,9 +229,9 @@ async function computeMetrics(): Promise<void> {
     const { error: upsertErr } = await supabase.from("performance_metrics").upsert(
       {
         period: period.name,
-        win_rate: winRate,
+        win_rate: winRate * 100,         // Store as percentage (0-100)
         sharpe_ratio: sharpe,
-        max_drawdown: maxDrawdown,
+        max_drawdown: maxDrawdown * 100, // Store as percentage (0-100)
         total_pnl: totalPnl,
         total_trades: trades.length,
         avg_edge_captured: avgEdgeCaptured,

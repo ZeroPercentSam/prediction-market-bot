@@ -379,20 +379,20 @@ export function useModelAccuracy() {
       // calibration_data which tracks actual outcomes per model
       const { data: calibrationData } = await supabase
         .from("calibration_data")
-        .select("model_id, predicted_probability, actual_outcome");
+        .select("model, forecast, outcome");
 
       if (!calibrationData || calibrationData.length === 0) return [];
 
       const byModel: Record<string, { correct: number; total: number }> = {};
 
       for (const row of calibrationData) {
-        const modelId = row.model_id;
-        if (!byModel[modelId]) byModel[modelId] = { correct: 0, total: 0 };
-        byModel[modelId].total++;
+        const modelName = row.model;
+        if (!byModel[modelName]) byModel[modelName] = { correct: 0, total: 0 };
+        byModel[modelName].total++;
 
-        const predictedYes = row.predicted_probability >= 0.5;
-        const actualYes = row.actual_outcome === 1;
-        if (predictedYes === actualYes) byModel[modelId].correct++;
+        const predictedYes = Number(row.forecast) >= 0.5;
+        const actualYes = row.outcome === 1;
+        if (predictedYes === actualYes) byModel[modelName].correct++;
       }
 
       return Object.entries(byModel).map(([model, stats]) => ({
@@ -467,7 +467,14 @@ export function usePipelineStatus() {
         if (!latest) {
           statuses[stage] = "idle";
         } else if (latest.status === "running") {
-          statuses[stage] = "running";
+          // Consider a job stale if it's been "running" for more than 10 minutes
+          const startedAt = new Date(latest.started_at).getTime();
+          const staleThreshold = 10 * 60 * 1000; // 10 minutes
+          if (Date.now() - startedAt > staleThreshold) {
+            statuses[stage] = "idle"; // Treat stale running jobs as idle
+          } else {
+            statuses[stage] = "running";
+          }
         } else if (latest.status === "error") {
           statuses[stage] = "error";
         } else {
