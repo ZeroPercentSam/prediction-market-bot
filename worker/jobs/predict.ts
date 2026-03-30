@@ -39,8 +39,10 @@ export async function runPredictJob(): Promise<void> {
   const start = Date.now();
 
   try {
-    // Load calibration params
-    await loadCalibrationParams();
+    // Load calibration params (non-fatal if fails)
+    await loadCalibrationParams().catch((e) =>
+      console.warn("[predict] Calibration load failed (using defaults):", e.message)
+    );
 
     // Load config
     const modelWeightsRaw = await getConfig("model_weights").catch(() => null);
@@ -167,58 +169,52 @@ What is the probability this resolves YES?`;
 
     // --- SUPERVISOR RECONCILIATION ---
     // Only activates when model spread > 8% (significant disagreement)
-    const supervisorResult = await runSupervisor(
-      market.question,
-      marketPrice,
-      calibratedEstimates,
-      researchContext
-    );
-
-    if (supervisorResult) {
-      // If supervisor identified resolution searches, run them
-      if (supervisorResult.resolutionSearches.length > 0) {
-        const additionalResearch = await runResolutionSearch(
-          supervisorResult.resolutionSearches,
-          market.question
-        );
-        // Log the additional research for debugging
-        if (additionalResearch) {
-          console.log(
-            `[predict] Supervisor ran ${supervisorResult.resolutionSearches.length} resolution searches for "${market.question.slice(0, 50)}..."`
-          );
-        }
-      }
-
-      // Use supervisor's reconciled probability (weighted blend)
-      // 60% supervisor, 40% ensemble — supervisor has seen all reasoning
-      ensembleProb =
-        supervisorResult.reconciledProbability * 0.6 + ensembleProb * 0.4;
-
-      console.log(
-        `[predict] Supervisor adjusted by ${(supervisorResult.adjustmentMade * 100).toFixed(1)}% for "${market.question.slice(0, 50)}..." (${supervisorResult.disagreements.length} disagreements)`
+    try {
+      const supervisorResult = await runSupervisor(
+        market.question,
+        marketPrice,
+        calibratedEstimates,
+        researchContext
       );
+
+      if (supervisorResult) {
+        if (supervisorResult.resolutionSearches.length > 0) {
+          await runResolutionSearch(
+            supervisorResult.resolutionSearches,
+            market.question
+          ).catch(() => {});
+        }
+
+        ensembleProb =
+          supervisorResult.reconciledProbability * 0.6 + ensembleProb * 0.4;
+
+        console.log(
+          `[predict] Supervisor adjusted by ${(supervisorResult.adjustmentMade * 100).toFixed(1)}% for "${market.question.slice(0, 50)}..."`
+        );
+      }
+    } catch (e) {
+      console.warn("[predict] Supervisor failed (using ensemble only):", e instanceof Error ? e.message : e);
     }
 
     // --- WHALE SIGNAL ---
-    // Check if smart money agrees with our model
-    const whaleSignal = await getWhaleSignal(
-      // Use platform_market_id for Polymarket conditionId lookup
-      market.id, // We'd need conditionId here — pass market.id for now
-      market.id
-    );
+    try {
+      const whaleSignal = await getWhaleSignal(market.id, market.id);
 
-    if (whaleSignal) {
-      const { adjustedProbability, whaleAdjustment } = applyWhaleAdjustment(
-        ensembleProb,
-        marketPrice,
-        whaleSignal
-      );
-      if (whaleAdjustment !== 0) {
-        ensembleProb = adjustedProbability;
-        console.log(
-          `[predict] Whale signal: ${whaleSignal.netDirection} (${whaleSignal.whaleCount} whales), adjusted by ${(whaleAdjustment * 100).toFixed(1)}%`
+      if (whaleSignal) {
+        const { adjustedProbability, whaleAdjustment } = applyWhaleAdjustment(
+          ensembleProb,
+          marketPrice,
+          whaleSignal
         );
+        if (whaleAdjustment !== 0) {
+          ensembleProb = adjustedProbability;
+          console.log(
+            `[predict] Whale: ${whaleSignal.netDirection}, adjusted ${(whaleAdjustment * 100).toFixed(1)}%`
+          );
+        }
       }
+    } catch (e) {
+      console.warn("[predict] Whale tracker failed (skipping):", e instanceof Error ? e.message : e);
     }
 
     // Calculate edge and EV
